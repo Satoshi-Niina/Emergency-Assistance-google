@@ -5,12 +5,27 @@ import { NODE_ENV } from '../config/env.mjs';
 
 const router = express.Router();
 
+// ロール正規化関数: 日本語・英語の両方に対応
 const normalizeUserRole = (rawRole) => {
-  if (!rawRole) return 'user';
+  if (!rawRole) return 'employee';
   const role = String(rawRole).toLowerCase().trim();
-  if (role === 'admin' || role === 'administrator') return 'admin';
-  if (role === 'employee' || role === 'staff') return 'employee';
-  return 'user';
+  
+  // システム管理者
+  if (role === 'admin' || role === 'administrator' || role === 'システム管理者' || role === 'system_admin') {
+    return 'admin';
+  }
+  
+  // 運用管理者
+  if (role === 'operator' || role === '運用管理者' || role === 'operation_manager') {
+    return 'operator';
+  }
+  
+  // 一般ユーザー（従業員含む）
+  if (role === 'employee' || role === 'staff' || role === '従業員' || role === '一般ユーザー' || role === 'user') {
+    return 'employee';
+  }
+  
+  return 'employee'; // デフォルトは一般ユーザー
 };
 
 // Login
@@ -27,10 +42,21 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    const result = await dbQuery(
-      'SELECT id, username, display_name, password, role, department FROM users WHERE username = $1',
-      [username]
-    );
+    // DB接続確認（master_dataスキーマを明示）
+    let result;
+    try {
+      result = await dbQuery(
+        'SELECT id, username, display_name, password, role, department FROM master_data.users WHERE username = $1',
+        [username]
+      );
+    } catch (dbError) {
+      console.error('[auth/login] Database query failed:', dbError);
+      return res.status(503).json({
+        success: false,
+        error: 'データベースに接続できません。管理者に連絡してください。',
+        details: NODE_ENV === 'production' ? undefined : dbError.message
+      });
+    }
 
     if (result.rows.length === 0) {
       console.log('[auth/login] User not found:', username);
@@ -41,36 +67,31 @@ router.post('/login', async (req, res) => {
     }
 
     const user = result.rows[0];
-    // パスワードハッシュの形式チェック（デバッグ用）
+    
+    // パスワードハッシュの形式チェック
     if (!user.password || !user.password.startsWith('$2')) {
-      console.warn('[auth/login] Warning: Stored password might not be a valid bcrypt hash for user:', username);
+      console.error('[auth/login] Invalid password hash format for user:', username);
+      return res.status(500).json({
+        success: false,
+        error: 'データベースのユーザー情報が破損しています。管理者に連絡してください。'
+      });
     }
 
-    console.log('[auth/login] Password validation debug:', {
-      username,
-      passwordLength: password.length,
-      hasSpecialChars: /[&<>"']/.test(password),
-      hashPrefix: user.password?.substring(0, 10)
-    });
+    console.log('[auth/login] Password validation for:', username);
 
-    // パスワードはbcryptハッシュのみで認証（平文不可）
-    // bcryptは特殊文字(&, <, >, ", 'など)を正しく処理します
+    // DB保存されたハッシュと入力パスワードを比較（必ずDBのみを使用）
     const isPasswordValid = await bcrypt.compare(password, user.password);
 
     if (!isPasswordValid) {
       console.log('[auth/login] Password validation failed for user:', username);
-      console.log('[auth/login] Failed password info:', {
-        length: password.length,
-        hasAmpersand: password.includes('&'),
-        hashStart: user.password?.substring(0, 20)
-      });
       return res.status(401).json({
         success: false,
         error: 'ユーザー名またはパスワードが間違っています'
       });
     }
 
-    console.log('[auth/login] Login successful for:', username, 'Role:', user.role);
+    console.log('[auth/login] ✅ Login successful for:', username, 'Role:', user.role);
+    console.log('[auth/login] Authentication source: Database (PostgreSQL)');
     console.log('[auth/login] Session debug:', {
       sessionID: req.sessionID,
       cookie: req.session.cookie,
@@ -169,34 +190,59 @@ router.get('/me', (req, res) => {
   }
 });
 
-// Check Admin
+// Check Admin (システム管理者)
 router.get('/check-admin', (req, res) => {
-  if (req.session.user && normalizeUserRole(req.session.user.role) === 'admin') {
+  const userRole = req.session.user ? normalizeUserRole(req.session.user.role) : null;
+  if (req.session.user && userRole === 'admin') {
     res.json({
       success: true,
-      message: '管理者権限あり',
-      user: req.session.user
+      message: 'システム管理者権限あり',
+      user: { ...req.session.user, role: userRole },
+      permissions: ['all'] // すべてのUI
     });
   } else {
     res.status(403).json({
       success: false,
-      message: '管理者権限がありません'
+      message: 'システム管理者権限がありません',
+      currentRole: userRole
     });
   }
 });
 
-// Check Employee
-router.get('/check-employee', (req, res) => {
-  if (req.session.user && normalizeUserRole(req.session.user.role) === 'employee') {
+// Check Operator (運用管理者)
+router.get('/check-operator', (req, res) => {
+  const userRole = req.session.user ? normalizeUserRole(req.session.user.role) : null;
+  if (req.session.user && (userRole === 'operator' || userRole === 'admin')) {
     res.json({
       success: true,
-      message: '従業員権限あり',
-      user: req.session.user
+      message: '運用管理者権限あり',
+      user: { ...req.session.user, role: userRole },
+      permissions: ['chat', 'history', 'emergency-data'] // チャット+履歴+応急復旧データ
     });
   } else {
     res.status(403).json({
       success: false,
-      message: '従業員権限がありません'
+      message: '運用管理者権限がありません',
+      currentRole: userRole
+    });
+  }
+});
+
+// Check Employee (従業員) - 後方互換性のため残す
+router.get('/check-employee', (req, res) => {
+  const userRole = req.session.user ? normalizeUserRole(req.session.user.role) : null;
+  if (req.session.user && (userRole === 'employee' || userRole === 'operator' || userRole === 'admin')) {
+    res.json({
+      success: true,
+      message: 'ユーザー権限あり',
+      user: { ...req.session.user, role: userRole },
+      permissions: ['chat', 'history'] // チャット+履歴のみ
+    });
+  } else {
+    res.status(403).json({
+      success: false,
+      message: 'ユーザー権限がありません',
+      currentRole: userRole
     });
   }
 });

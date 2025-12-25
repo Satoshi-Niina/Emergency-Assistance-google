@@ -1,11 +1,19 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
-import { getBlobServiceClient, containerName, norm, upload, streamToBuffer } from '../infra/blob.mjs';
-import { AZURE_STORAGE_CONNECTION_STRING, isAzureEnvironment } from '../config/env.mjs';
+import { upload } from '../infra/blob.mjs';
 import { dbQuery } from '../infra/db.mjs';
+import { isAzureEnvironment } from '../config/env.mjs';
+import { 
+  downloadFromGCS, 
+  listFilesInGCS, 
+  bucket 
+} from '../lib/google-cloud-storage.mjs';
 
 const router = express.Router();
+
+// Azure関連の後方互換性のための定数（使用されていない）
+const containerName = 'knowledge';
 
 // ID正規化（.json拡張子を除去、ファイル名全体を保持）
 const normalizeId = (id = '') => {
@@ -17,37 +25,8 @@ const normalizeId = (id = '') => {
   return normalized;
 };
 
-// Blobから対象の履歴ファイルを探す
-async function findHistoryBlob(containerClient, normalizedId) {
-  const prefix = 'knowledge-base/exports/';
-  console.log('[findHistoryBlob] Searching for:', normalizedId);
-  
-  // まずファイル名完全一致で検索
-  for await (const blob of containerClient.listBlobsFlat({ prefix })) {
-    if (!blob.name.endsWith('.json')) continue;
-    const fileName = blob.name.split('/').pop();
-    const fileNameWithoutExt = fileName?.replace(/\.json$/, '');
-    
-    // ファイル名が完全一致する場合
-    if (fileNameWithoutExt === normalizedId) {
-      console.log('[findHistoryBlob] Found exact match:', blob.name);
-      return { blobName: blob.name, fileName };
-    }
-  }
-  
-  // 完全一致しない場合は部分一致で検索（後方互換性）
-  for await (const blob of containerClient.listBlobsFlat({ prefix })) {
-    if (!blob.name.endsWith('.json')) continue;
-    const fileName = blob.name.split('/').pop();
-    if (fileName && fileName.includes(normalizedId)) {
-      console.log('[findHistoryBlob] Found partial match:', blob.name);
-      return { blobName: blob.name, fileName };
-    }
-  }
-  
-  console.log('[findHistoryBlob] No match found for:', normalizedId);
-  return null;
-}
+// Azure Blob関連の関数は削除済み（GCS/ローカル専用）
+// findHistoryBlob, downloadJson などは使用されていません
 
 // ファイル名やJSONからタイトル・機種情報を抽出
 function deriveTitleFromFileName(fileName = '') {
@@ -102,14 +81,44 @@ function extractMetadataFromJson(json = {}, fileName = '') {
     extractedMachineNumber: machineNumber
   });
 
-  // 画像抽出: chatData.messages[].media[].url, savedImages 配列
-  const images = [];
+  // 画像抽出: jsonData.images[] (chat-export形式)
+  const exportImages = Array.isArray(json.images) ? json.images : [];
+  const exportId = json.exportId;
+  
+  // chat-export形式の画像を変換
+  const processedImages = exportImages.map((img) => {
+    if (!img || typeof img !== 'object') return null;
+    
+    // storagePathから exportId と imageName を抽出
+    // 例: "chat-exports/images/abc-123/image.png" → exportId="abc-123", imageName="image.png"
+    let imageUrl = img.url;
+    
+    if (img.storagePath && exportId) {
+      const parts = img.storagePath.split('/');
+      const imageName = parts[parts.length - 1]; // 最後の部分がファイル名
+      // APIエンドポイント形式のURLを生成
+      imageUrl = `/api/history/images/${exportId}/${imageName}`;
+    } else if (img.originalName && exportId) {
+      // fallback: originalNameを使用
+      imageUrl = `/api/history/images/${exportId}/${img.originalName}`;
+    }
+    
+    return {
+      url: imageUrl,
+      fileName: img.originalName || img.fileName || '',
+      storagePath: img.storagePath || '',
+      mimeType: img.mimeType || 'image/png',
+      size: img.size || 0
+    };
+  }).filter(img => img !== null);
+
+  // 旧形式の画像も処理（後方互換性）
   const messages = Array.isArray(chatData.messages) ? chatData.messages : [];
   messages.forEach((msg) => {
     const media = Array.isArray(msg.media) ? msg.media : [];
     media.forEach((m) => {
       if (m && (m.url || m.fileName || m.path)) {
-        images.push({
+        processedImages.push({
           url: m.url || m.fileName || m.path,
           fileName: m.fileName || m.url || m.path,
         });
@@ -131,24 +140,25 @@ function extractMetadataFromJson(json = {}, fileName = '') {
     return parts[parts.length - 1];
   };
 
-  const mergedImages = [
-    ...images,
-    ...savedImages.map((img) => {
-      if (typeof img === 'string') {
-        const fileName = extractFileName(img);
-        return { url: img, fileName: fileName };
-      }
-      if (img && typeof img === 'object') {
-        const fileName = extractFileName(img.fileName || img.url || img.path);
-        return {
-          url: img.url || img.fileName || img.path,
-          fileName: fileName,
-          ...img,
-        };
-      }
-      return { url: '', fileName: '' };
-    }),
-  ].filter((img) => img.url && img.fileName);
+  // savedImages（旧形式）も追加
+  savedImages.forEach((img) => {
+    if (typeof img === 'string') {
+      const fileName = extractFileName(img);
+      processedImages.push({ url: img, fileName: fileName });
+    } else if (img && typeof img === 'object') {
+      const fileName = extractFileName(img.fileName || img.url || img.path);
+      processedImages.push({
+        url: img.url || img.fileName || img.path,
+        fileName: fileName,
+        ...img,
+      });
+    }
+  });
+
+  const uniqueImages = processedImages.filter((img, index, self) => 
+    img.url && img.fileName && 
+    index === self.findIndex(t => t.url === img.url)
+  );
 
   const title = json.title || chatData.title || deriveTitleFromFileName(fileName);
 
@@ -156,24 +166,11 @@ function extractMetadataFromJson(json = {}, fileName = '') {
     title,
     machineType,
     machineNumber,
-    images: mergedImages,
+    images: uniqueImages,
   };
 }
 
-// BlobからJSONを取得
-async function downloadJson(containerClient, blobName) {
-  const blobClient = containerClient.getBlobClient(blobName);
-  if (!(await blobClient.exists())) return null;
-  const downloadResponse = await blobClient.download();
-  const chunks = [];
-  if (downloadResponse.readableStreamBody) {
-    for await (const chunk of downloadResponse.readableStreamBody) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-  }
-  const buffer = Buffer.concat(chunks);
-  return JSON.parse(buffer.toString('utf8'));
-}
+// Azure Blob関連の downloadJson 関数は削除済み
 
 // オブジェクトをマージ（undefinedは無視）
 function mergeData(original, updates) {
@@ -195,25 +192,21 @@ router.get('/', async (req, res) => {
     console.log('[history] Fetching history list');
     const items = [];
     
-    // Azure環境判定
-    const useAzure = isAzureEnvironment();
-    console.log('[history] Environment:', { useAzure, STORAGE_MODE: process.env.STORAGE_MODE });
+    const useGCS = !!bucket;
+    console.log('[history] Storage mode:', { useGCS, STORAGE_MODE: process.env.STORAGE_MODE });
     
-    // ローカル環境: ローカルファイルシステムから読み込み
-    if (!useAzure) {
-      console.log('[history] LOCAL: Reading from local filesystem');
-      const localDir = path.resolve(process.cwd(), 'knowledge-base', 'exports');
-      
-      if (fs.existsSync(localDir)) {
-        const files = fs.readdirSync(localDir);
-        console.log(`[history] LOCAL: Found ${files.length} files`);
+    if (useGCS) {
+      // GCS (Google Cloud Storage) から取得
+      console.log('[history] GCS: Reading from Google Cloud Storage');
+      try {
+        const files = await listFilesInGCS('chat-exports/json/');
+        console.log(`[history] GCS: Found ${files.length} files`);
         
-        for (const fileName of files) {
-          if (!fileName.endsWith('.json')) continue;
+        for (const file of files) {
+          if (!file.name.endsWith('.json')) continue;
           
-          const filePath = path.join(localDir, fileName);
+          const fileName = file.name.split('/').pop();
           const id = fileName.replace('.json', '');
-          const stats = fs.statSync(filePath);
           const defaultTitle = deriveTitleFromFileName(fileName);
           
           let meta = {
@@ -224,15 +217,24 @@ router.get('/', async (req, res) => {
           };
           
           try {
-            const content = fs.readFileSync(filePath, 'utf-8');
-            const json = JSON.parse(content);
+            const content = await downloadFromGCS(file.name);
+            const json = JSON.parse(content.toString('utf-8'));
             meta = extractMetadataFromJson(json, fileName);
             
             if (!meta.title || meta.title === '故障履歴') {
               meta.title = defaultTitle;
             }
+            
+            console.log('[history] GCS metadata:', {
+              fileName,
+              title: meta.title,
+              machineType: meta.machineType,
+              machineNumber: meta.machineNumber,
+              imageCount: meta.images.length,
+              firstImageUrl: meta.images[0]?.url || 'none'
+            });
           } catch (readError) {
-            console.warn('[history] LOCAL: Metadata read failed for:', fileName, readError.message);
+            console.warn('[history] GCS: Metadata read failed for:', fileName, readError.message);
           }
           
           items.push({
@@ -243,100 +245,84 @@ router.get('/', async (req, res) => {
             machineNumber: meta.machineNumber,
             imageCount: meta.images.length,
             images: meta.images,
-            createdAt: stats.mtime,
-            lastModified: stats.mtime,
-            source: 'local'
+            createdAt: file.created || new Date().toISOString(),
+            lastModified: file.updated || file.created || new Date().toISOString(),
+            source: 'gcs'
           });
         }
+        
+        console.log(`[history] GCS: Found ${items.length} items`);
+        
+        return res.json({
+          success: true,
+          data: items,
+          total: items.length,
+          source: 'gcs',
+          timestamp: new Date().toISOString()
+        });
+      } catch (gcsError) {
+        console.error('[history] GCS list failed:', gcsError.message);
+        // GCS失敗時はローカルフォールバック
       }
-      
-      console.log(`[history] LOCAL: Found ${items.length} items`);
-      
-      return res.json({
-        success: true,
-        data: items,
-        total: items.length,
-        source: 'local',
-        timestamp: new Date().toISOString()
-      });
     }
     
-    // Azure環境: Blobから取得
-    console.log('[history] AZURE: Reading from BLOB storage');
-    const blobServiceClient = getBlobServiceClient();
-    if (blobServiceClient) {
-      try {
-        const containerClient = blobServiceClient.getContainerClient(containerName);
-        // Blob一覧取得: exports/
-        const prefix = norm('exports/');
-
-        for await (const blob of containerClient.listBlobsFlat({ prefix })) {
-          if (!blob.name.endsWith('.json')) continue;
-
-          const fileName = blob.name.split('/').pop();
-          const id = fileName.replace('.json', '');
-
-          // ファイル名からデフォルトのタイトルを抽出
-          const defaultTitle = deriveTitleFromFileName(fileName);
+    // ローカルファイルシステムから読み込み（GCS利用不可時のフォールバック）
+    console.log('[history] LOCAL: Reading from local filesystem');
+    const localDir = path.resolve(process.cwd(), 'knowledge-base', 'chat-exports', 'json');
+    
+    if (fs.existsSync(localDir)) {
+      const files = fs.readdirSync(localDir);
+      console.log(`[history] LOCAL: Found ${files.length} files`);
+      
+      for (const fileName of files) {
+        if (!fileName.endsWith('.json')) continue;
+        
+        const filePath = path.join(localDir, fileName);
+        const id = fileName.replace('.json', '');
+        const stats = fs.statSync(filePath);
+        const defaultTitle = deriveTitleFromFileName(fileName);
+        
+        let meta = {
+          title: defaultTitle,
+          machineType: 'Unknown',
+          machineNumber: 'Unknown',
+          images: [],
+        };
+        
+        try {
+          const content = fs.readFileSync(filePath, 'utf-8');
+          const json = JSON.parse(content);
+          meta = extractMetadataFromJson(json, fileName);
           
-          let meta = {
-            title: defaultTitle,
-            machineType: 'Unknown',
-            machineNumber: 'Unknown',
-            images: [],
-          };
-
-          // メタデータと画像データを取得（サムネイル表示用）
-          try {
-            const blobClient = containerClient.getBlobClient(blob.name);
-            const downloadResponse = await blobClient.download();
-            if (downloadResponse.readableStreamBody) {
-              const buffer = await streamToBuffer(downloadResponse.readableStreamBody);
-              const json = JSON.parse(buffer.toString('utf8'));
-              meta = extractMetadataFromJson(json, fileName);
-              
-              // titleが取得できなかった場合はファイル名から生成したタイトルを使用
-              if (!meta.title || meta.title === '故障履歴') {
-                meta.title = defaultTitle;
-              }
-              
-              console.log('[history] Metadata extracted:', {
-                fileName,
-                title: meta.title,
-                machineType: meta.machineType,
-                machineNumber: meta.machineNumber,
-                imageCount: meta.images.length
-              });
-            }
-          } catch (blobMetaError) {
-            console.warn('[history] Metadata read failed for:', fileName, blobMetaError.message);
+          if (!meta.title || meta.title === '故障履歴') {
             meta.title = defaultTitle;
           }
-
-          items.push({
-            id,
-            fileName,
-            title: meta.title,
-            machineType: meta.machineType,
-            machineNumber: meta.machineNumber,
-            imageCount: meta.images.length,
-            images: meta.images,
-            createdAt: blob.properties.lastModified,
-            lastModified: blob.properties.lastModified,
-            source: 'blob'
-          });
+        } catch (readError) {
+          console.warn('[history] LOCAL: Metadata read failed for:', fileName, readError.message);
         }
-        console.log(`[history] Found ${items.length} items in Blob`);
-      } catch (blobError) {
-        console.error('[history] Blob list failed:', blobError.message);
+        
+        items.push({
+          id,
+          fileName,
+          title: meta.title,
+          machineType: meta.machineType,
+          machineNumber: meta.machineNumber,
+          imageCount: meta.images.length,
+          images: meta.images,
+          createdAt: stats.mtime,
+          lastModified: stats.mtime,
+          source: 'local'
+        });
       }
     }
-
-    res.json({
+    
+    console.log(`[history] LOCAL: Found ${items.length} items`);
+    
+    return res.json({
       success: true,
       data: items,
       total: items.length,
-      source: 'blob',
+      source: 'local',
       timestamp: new Date().toISOString()
     });
 
@@ -365,6 +351,85 @@ router.get('/machine-data', async (req, res) => {
   } catch (error) {
     console.error('[history/machine-data] Error:', error);
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get image from GCS
+router.get('/images/:exportId/:imageName', async (req, res) => {
+  try {
+    const { exportId, imageName } = req.params;
+    console.log(`[history/images] Request: ${exportId}/${imageName}`);
+    
+    const useGCS = !!bucket;
+    const imagePath = `chat-exports/images/${exportId}/${imageName}`;
+    
+    if (useGCS) {
+      // GCSから取得
+      try {
+        console.log(`[history/images] GCS: Downloading ${imagePath}`);
+        const imageBuffer = await downloadFromGCS(imagePath);
+        
+        // 拡張子からContent-Typeを判定
+        let contentType = 'image/png';
+        if (imageName.endsWith('.jpg') || imageName.endsWith('.jpeg')) {
+          contentType = 'image/jpeg';
+        } else if (imageName.endsWith('.gif')) {
+          contentType = 'image/gif';
+        } else if (imageName.endsWith('.webp')) {
+          contentType = 'image/webp';
+        } else if (imageName.endsWith('.bmp')) {
+          contentType = 'image/bmp';
+        }
+        
+        res.set({
+          'Content-Type': contentType,
+          'Cache-Control': 'public, max-age=31536000',
+        });
+        
+        return res.status(200).send(imageBuffer);
+      } catch (gcsError) {
+        console.error(`[history/images] GCS error for ${imagePath}:`, gcsError.message);
+        // フォールバックしてローカルを試す
+      }
+    }
+    
+    // ローカルから取得
+    const localPath = path.join(process.cwd(), 'knowledge-base', imagePath);
+    
+    if (!fs.existsSync(localPath)) {
+      return res.status(404).json({
+        success: false,
+        error: '画像が見つかりません',
+        path: imagePath
+      });
+    }
+    
+    let contentType = 'image/png';
+    if (imageName.endsWith('.jpg') || imageName.endsWith('.jpeg')) {
+      contentType = 'image/jpeg';
+    } else if (imageName.endsWith('.gif')) {
+      contentType = 'image/gif';
+    } else if (imageName.endsWith('.webp')) {
+      contentType = 'image/webp';
+    } else if (imageName.endsWith('.bmp')) {
+      contentType = 'image/bmp';
+    }
+    
+    res.set({
+      'Content-Type': contentType,
+      'Cache-Control': 'public, max-age=31536000',
+    });
+    
+    const imageBuffer = fs.readFileSync(localPath);
+    return res.status(200).send(imageBuffer);
+    
+  } catch (error) {
+    console.error('[history/images] Error:', error);
+    res.status(500).json({
+      success: false,
+      error: '画像の取得に失敗しました',
+      message: error.message
+    });
   }
 });
 
@@ -423,20 +488,19 @@ router.post('/upload-image', upload.single('image'), async (req, res) => {
       console.log(`[history/upload-image] Generated fileName: ${fileName}`);
       
       // Azure環境かどうかを判定
-      const useAzure = isAzureEnvironment();
+      const useLocal = process.env.STORAGE_MODE === 'local' || !process.env.STORAGE_MODE;
       
       console.log('[history/upload-image] Environment check:', {
         NODE_ENV: process.env.NODE_ENV,
         STORAGE_MODE: process.env.STORAGE_MODE,
-        hasStorageConnectionString: !!process.env.AZURE_STORAGE_CONNECTION_STRING,
-        isAzureEnvironment: useAzure
+        useLocal: useLocal
       });
 
       // ローカル環境: ローカルファイルシステムのみ使用
-      if (!useAzure) {
+      if (useLocal) {
         console.log('[history/upload-image] LOCAL: Using local filesystem');
         
-        const localDir = path.resolve(process.cwd(), 'knowledge-base', 'images', 'chat-exports');
+        const localDir = path.resolve(process.cwd(), 'knowledge-base', 'chat-exports', 'images');
         const localFilePath = path.join(localDir, fileName);
         
         // ディレクトリが存在しない場合は作成
@@ -463,16 +527,15 @@ router.post('/upload-image', upload.single('image'), async (req, res) => {
       }
 
       // Azure環境: BLOBストレージのみ使用
-      console.log('[history/upload-image] AZURE: Using BLOB storage');
+      console.log('[history/upload-image] STORAGE: Using cloud storage');
       const blobServiceClient = getBlobServiceClient();
       
       if (!blobServiceClient) {
-        console.error('[history/upload-image] AZURE: ❌ BLOB storage not configured');
-        console.error('[history/upload-image] Please verify that AZURE_STORAGE_CONNECTION_STRING is properly set in Azure App Service Configuration');
+        console.error('[history/upload-image] STORAGE: ❌ Cloud storage not configured');
         return res.status(503).json({
           success: false,
-          error: 'BLOB storage not available (Azure環境)',
-          hint: 'Azure App Serviceの構成でAZURE_STORAGE_CONNECTION_STRINGが設定されているか確認してください'
+          error: 'Cloud storage not available',
+          hint: 'STORAGE_MODEを確認してください'
         });
       }
 
@@ -496,7 +559,7 @@ router.post('/upload-image', upload.single('image'), async (req, res) => {
 
       // BLOBに保存
       const containerClient = blobServiceClient.getContainerClient(containerName);
-      const blobName = norm(`images/chat-exports/${fileName}`);
+      const blobName = norm(`chat-exports/images/${fileName}`);
       console.log('[history/upload-image] 📤 Starting BLOB upload:', {
         container: containerName,
         blobName: blobName,
@@ -624,12 +687,9 @@ router.post('/upload-image', upload.single('image'), async (req, res) => {
     errorCode: lastError?.code,
     errorName: lastError?.name,
     diagnostics: {
-      hasStorageConnection: !!(process.env.AZURE_STORAGE_CONNECTION_STRING),
       containerName: containerName,
-      isAzureEnv: isAzureEnvironment(),
       nodeEnv: process.env.NODE_ENV,
-      storageMode: process.env.STORAGE_MODE,
-      hasWebsiteSiteName: !!process.env.WEBSITE_SITE_NAME
+      storageMode: process.env.STORAGE_MODE
     }
   });
 });
@@ -640,45 +700,41 @@ router.get('/exports/:fileName', async (req, res) => {
     const { fileName } = req.params;
     console.log(`[history/exports] Request: ${fileName}`);
     
-    const useAzure = isAzureEnvironment();
+    const useGCS = !!bucket;
     
-    // ローカルモード: knowledge-base/exports/ から読み取り
-    if (!useAzure) {
-      const filePath = path.join(process.cwd(), 'knowledge-base', 'exports', fileName);
-      
-      if (!await fs.promises.access(filePath).then(() => true).catch(() => false)) {
-        return res.status(404).json({
-          success: false,
-          error: 'ファイルが見つかりません',
-        });
+    if (useGCS) {
+      // GCSから取得
+      try {
+        const gcsPath = `chat-exports/json/${fileName}`;
+        console.log(`[history/exports] GCS: Downloading ${gcsPath}`);
+        const content = await downloadFromGCS(gcsPath);
+        
+        const contentType = fileName.endsWith('.json') ? 'application/json' : 'application/octet-stream';
+        res.setHeader('Content-Type', contentType);
+        res.send(content);
+        return;
+      } catch (gcsError) {
+        console.error('[history/exports] GCS error:', gcsError.message);
+        // フォールバックしてローカルを試す
       }
-      
-      const contentType = fileName.endsWith('.json') ? 'application/json' : 'application/octet-stream';
-      res.setHeader('Content-Type', contentType);
-      const stream = fs.createReadStream(filePath);
-      stream.pipe(res);
-      return;
     }
     
-    // Azureモード: BLOBから読み取り
-    const blobServiceClient = getBlobServiceClient();
-    if (!blobServiceClient) {
-      return res.status(503).json({
+    // ローカルモード: chat-exports/json/ から読み取り
+    const filePath = path.join(process.cwd(), 'knowledge-base', 'chat-exports', 'json', fileName);
+    
+    if (!await fs.promises.access(filePath).then(() => true).catch(() => false)) {
+      return res.status(404).json({
         success: false,
-        error: 'BLOBストレージが利用できません',
+        error: 'ファイルが見つかりません',
       });
     }
-
-    const containerClient = blobServiceClient.getContainerClient(containerName);
-    // Blobファイル取得: knowledge-base/exports/
-    const blobName = `knowledge-base/exports/${fileName}`;
-    const blobClient = containerClient.getBlobClient(blobName);
-
-    const downloadResponse = await blobClient.download();
-    const contentType = downloadResponse.contentType || 'application/json';
-
+    
+    const contentType = fileName.endsWith('.json') ? 'application/json' : 'application/octet-stream';
     res.setHeader('Content-Type', contentType);
-    downloadResponse.readableStreamBody.pipe(res);
+    const stream = fs.createReadStream(filePath);
+    stream.pipe(res);
+    return;
+
   } catch (error) {
     console.error('[history/exports] Error:', error);
     res.status(404).json({
@@ -694,22 +750,20 @@ router.get('/export-files', async (req, res) => {
   try {
     console.log('[history/export-files] Fetching export files');
     
-    const useAzure = isAzureEnvironment();
     const items = [];
+    const useGCS = !!bucket;
+    console.log('[history/export-files] Storage mode:', { useGCS });
     
-    // ローカルモード: knowledge-base/exports/ から一覧取得
-    if (!useAzure) {
-      console.log('[history/export-files] ローカルモード: knowledge-base/exports/ から取得');
-      const exportsDir = path.join(process.cwd(), 'knowledge-base', 'exports');
-      
+    if (useGCS) {
+      // GCS から取得
+      console.log('[history/export-files] GCS: chat-exports/json/ から取得');
       try {
-        const files = await fs.promises.readdir(exportsDir);
+        const files = await listFilesInGCS('chat-exports/json/');
         
-        for (const fileName of files) {
-          if (!fileName.endsWith('.json')) continue;
+        for (const file of files) {
+          if (!file.name.endsWith('.json')) continue;
           
-          const filePath = path.join(exportsDir, fileName);
-          const stats = await fs.promises.stat(filePath);
+          const fileName = file.name.split('/').pop();
           
           // ファイル名からタイトルを抽出（UUID部分を除去）
           let title = fileName.replace('.json', '');
@@ -722,108 +776,80 @@ router.get('/export-files', async (req, res) => {
             id: fileName.replace('.json', ''),
             fileName: fileName,
             title: title,
-            blobName: null,
-            createdAt: stats.mtime.toISOString(),
-            lastModified: stats.mtime.toISOString(),
-            exportTimestamp: stats.mtime.toISOString(),
-            size: stats.size
+            blobName: file.name,
+            createdAt: file.created || new Date().toISOString(),
+            lastModified: file.updated || file.created || new Date().toISOString(),
+            exportTimestamp: file.created || new Date().toISOString(),
+            size: file.size || 0
           });
         }
-        console.log('[history/export-files] ✅ ローカルファイル取得完了:', items.length, '件');
-      } catch (localError) {
-        console.error('[history/export-files] ❌ ローカルディレクトリエラー:', localError.message);
+        console.log('[history/export-files] ✅ GCS取得完了:', items.length, '件');
+        
+        return res.json({
+          success: true,
+          files: items,
+          count: items.length,
+          source: 'gcs',
+          diagnostics: {
+            mode: 'gcs',
+            filesFound: items.length
+          }
+        });
+      } catch (gcsError) {
+        console.error('[history/export-files] GCS error:', gcsError.message);
+        // フォールバックしてローカルを試す
+      }
+    }
+    
+    // ローカルモード: chat-exports/json/ から取得
+    console.log('[history/export-files] ローカルモード: chat-exports/json/ から取得');
+    const exportsDir = path.join(process.cwd(), 'knowledge-base', 'chat-exports', 'json');
+    
+    try {
+      // ディレクトリが存在しない場合は作成
+      if (!fs.existsSync(exportsDir)) {
+        console.log('[history/export-files] Creating directory:', exportsDir);
+        await fs.promises.mkdir(exportsDir, { recursive: true });
       }
       
-      return res.json({
-        success: true,
-        files: items,
-        count: items.length,
-        source: 'local',
-        diagnostics: {
-          mode: 'local',
-          filesFound: items.length
-        }
-      });
-    }
-    
-    // Azureモード: BLOBから一覧取得
-    console.log('[history/export-files] 🔍 BLOB接続診断開始');
-    console.log('[history/export-files] 環境変数:', {
-      AZURE_STORAGE_CONNECTION_STRING: process.env.AZURE_STORAGE_CONNECTION_STRING ? '設定済み' : '未設定',
-      BLOB_CONTAINER_NAME: process.env.BLOB_CONTAINER_NAME || 'デフォルト'
-    });
-    
-    const blobServiceClient = getBlobServiceClient();
-    console.log('[history/export-files] BLOBクライアント:', blobServiceClient ? '取得成功' : '取得失敗');
-
-    if (blobServiceClient) {
-      try {
-        const containerClient = blobServiceClient.getContainerClient(containerName);
-        console.log('[history/export-files] コンテナ名:', containerName);
+      const files = await fs.promises.readdir(exportsDir);
+      
+      for (const fileName of files) {
+        if (!fileName.endsWith('.json')) continue;
         
-        const containerExists = await containerClient.exists();
-        console.log('[history/export-files] コンテナ存在確認:', containerExists ? 'あり' : 'なし');
+        const filePath = path.join(exportsDir, fileName);
+        const stats = await fs.promises.stat(filePath);
         
-        if (!containerExists) {
-          console.error('[history/export-files] ❌ コンテナが存在しません:', containerName);
-          return res.json({
-            success: true,
-            files: [],
-            count: 0,
-            warning: `コンテナ "${containerName}" が見つかりません`,
-            diagnostics: {
-              blobClientAvailable: true,
-              containerExists: false,
-              containerName: containerName
-            }
-          });
+        // ファイル名からタイトルを抽出（UUID部分を除去）
+        let title = fileName.replace('.json', '');
+        const titleMatch = title.match(/^(.+?)_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}_/);
+        if (titleMatch) {
+          title = titleMatch[1];
         }
         
-        // norm()を使用してBLOB_PREFIXを自動適用（knowledge-base/は重複するので除外）
-        const prefix = norm('exports/');
-        console.log('[history/export-files] 検索プレフィックス:', prefix);
-        
-        for await (const blob of containerClient.listBlobsFlat({ prefix })) {
-          if (blob.name.endsWith('.json')) {
-            const fileName = blob.name.split('/').pop();
-            
-            // ファイル名からタイトルを抽出（UUID部分を除去）
-            let title = fileName.replace('.json', '');
-            const titleMatch = title.match(/^(.+?)_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}_/);
-            if (titleMatch) {
-              title = titleMatch[1];
-            }
-            
-            items.push({
-              id: fileName.replace('.json', ''),
-              fileName: fileName,
-              title: title,
-              blobName: blob.name,
-              createdAt: blob.properties.lastModified?.toISOString() || new Date().toISOString(),
-              lastModified: blob.properties.lastModified?.toISOString() || new Date().toISOString(),
-              exportTimestamp: blob.properties.lastModified?.toISOString() || new Date().toISOString(),
-              size: blob.properties.contentLength || 0
-            });
-          }
-        }
-        console.log('[history/export-files] ✅ 取得完了:', items.length, '件');
-      } catch (blobError) {
-        console.error('[history/export-files] ❌ BLOBエラー:', blobError);
-        console.error('[history/export-files] エラー詳細:', blobError.message);
-        console.error('[history/export-files] スタックトレース:', blobError.stack);
+        items.push({
+          id: fileName.replace('.json', ''),
+          fileName: fileName,
+          title: title,
+          blobName: null,
+          createdAt: stats.mtime.toISOString(),
+          lastModified: stats.mtime.toISOString(),
+          exportTimestamp: stats.mtime.toISOString(),
+          size: stats.size
+        });
       }
-    } else {
-      console.error('[history/export-files] ❌ BLOBクライアントが利用できません');
+      console.log('[history/export-files] ✅ ローカルファイル取得完了:', items.length, '件');
+    } catch (localError) {
+      console.error('[history/export-files] ❌ ローカルディレクトリエラー:', localError.message);
     }
-
+    
     res.json({
       success: true,
       files: items,
       count: items.length,
-      source: 'blob',
+      source: 'local',
       diagnostics: {
-        blobClientAvailable: !!blobServiceClient,
-        containerName: containerName,
+        mode: 'local',
         filesFound: items.length
       }
     });
@@ -838,11 +864,51 @@ router.get('/export-files', async (req, res) => {
 
 // Get history detail by id
 async function getHistoryDetail(normalizedId) {
-  const useAzure = isAzureEnvironment();
+  const useGCS = !!bucket;
   
-  // ローカルモード: knowledge-base/exports/ から読み取り
-  if (!useAzure) {
-    const baseDir = path.join(process.cwd(), 'knowledge-base', 'exports');
+  if (useGCS) {
+    // GCS から取得
+    try {
+      const files = await listFilesInGCS('chat-exports/json/');
+      
+      // ファイル名の正規化して検索
+      const targetFile = files.find(f => {
+        const fileName = f.name.split('/').pop();
+        const nameWithoutExt = fileName.replace('.json', '');
+        return nameWithoutExt === normalizedId || 
+               nameWithoutExt.includes(`_${normalizedId}_`) ||
+               fileName === `${normalizedId}.json`;
+      });
+      
+      if (!targetFile) {
+        return { status: 404, error: 'ファイルが見つかりません' };
+      }
+      
+      const content = await downloadFromGCS(targetFile.name);
+      const json = JSON.parse(content.toString('utf-8'));
+      const fileName = targetFile.name.split('/').pop();
+      const meta = extractMetadataFromJson(json, fileName);
+      
+      return {
+        status: 200,
+        data: {
+          id: normalizedId,
+          fileName: fileName,
+          blobName: targetFile.name,
+          ...meta,
+          json,
+        },
+      };
+    } catch (gcsError) {
+      console.error('[getHistoryDetail] GCS error:', gcsError.message);
+      // フォールバックしてローカルを試す
+    }
+  }
+  
+  // ローカルモード: chat-exports/json/ から読み取り
+  const baseDir = path.join(process.cwd(), 'knowledge-base', 'chat-exports', 'json');
+  
+  try {
     const files = await fs.promises.readdir(baseDir);
     
     // ファイル名の正規化して検索
@@ -872,35 +938,9 @@ async function getHistoryDetail(normalizedId) {
         json,
       },
     };
+  } catch (localError) {
+    return { status: 500, error: 'ファイル読込エラー: ' + localError.message };
   }
-  
-  // Azureモード: BLOBから読み取り
-  const blobServiceClient = getBlobServiceClient();
-  if (!blobServiceClient) return { status: 503, error: 'BLOB storage not available' };
-
-  const containerClient = blobServiceClient.getContainerClient(containerName);
-  const found = await findHistoryBlob(containerClient, normalizedId);
-  if (!found) return { status: 404, error: 'ファイルが見つかりません' };
-
-  const blobClient = containerClient.getBlobClient(found.blobName);
-  const downloadResponse = await blobClient.download();
-  if (!downloadResponse.readableStreamBody) return { status: 500, error: 'ファイル読込に失敗しました' };
-
-  const buffer = await streamToBuffer(downloadResponse.readableStreamBody);
-  const json = JSON.parse(buffer.toString('utf8'));
-
-  const meta = extractMetadataFromJson(json, found.fileName);
-
-  return {
-    status: 200,
-    data: {
-      id: normalizedId,
-      fileName: found.fileName,
-      blobName: found.blobName,
-      ...meta,
-      json,
-    },
-  };
 }
 
 router.get(['/detail/:id', '/item/:id', '/:id'], async (req, res, next) => {
@@ -930,10 +970,10 @@ async function handleUpdateHistory(req, res, rawId) {
     const normalizedId = normalizeId(rawId);
     const useAzure = isAzureEnvironment();
     
-    // ローカルモード: knowledge-base/exports/ から読み書き
+    // ローカルモード: chat-exports/json/ から読み書き
     if (!useAzure) {
-      const baseDir = path.join(process.cwd(), 'knowledge-base', 'exports');
-      const imagesDir = path.join(process.cwd(), 'knowledge-base', 'images', 'chat-exports');
+      const baseDir = path.join(process.cwd(), 'knowledge-base', 'chat-exports', 'json');
+      const imagesDir = path.join(process.cwd(), 'knowledge-base', 'chat-exports', 'images');
       
       // 既存ファイルを検索
       const files = await fs.promises.readdir(baseDir);
@@ -1053,7 +1093,7 @@ async function handleUpdateHistory(req, res, rawId) {
 
     const containerClient = blobServiceClient.getContainerClient(containerName);
     const found = await findHistoryBlob(containerClient, normalizedId);
-    const targetBlobName = found?.blobName || `knowledge-base/exports/${normalizedId}.json`;
+    const targetBlobName = found?.blobName || `chat-exports/json/${normalizedId}.json`;
     const targetFileName = found?.fileName || `${normalizedId}.json`;
 
     console.log('[history/update] Target:', { normalizedId, targetBlobName, found: !!found });

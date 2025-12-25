@@ -1,1 +1,0 @@
-2025-12-03T09:08:31    Outgoing response, type: response, statusCode: 400, statusText: BadRequest

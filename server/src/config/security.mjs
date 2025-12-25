@@ -1,9 +1,8 @@
 import helmet from 'helmet';
-import { AZURE_STORAGE_ACCOUNT_NAME } from './env.mjs';
 
-const storageUrl = AZURE_STORAGE_ACCOUNT_NAME
-  ? `https://${AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net`
-  : "https://*.blob.core.windows.net";
+// Azure BLOB Storageは使用しないため、GCS用のURLを設定
+// Google Cloud Storageは認証付きURLを使用するため、CSPで特定のURLを許可する必要なし
+const storageUrl = "https://storage.googleapis.com";
 
 export const helmetConfig = {
   contentSecurityPolicy: {

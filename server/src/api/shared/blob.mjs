@@ -1,29 +1,13 @@
-import { BlobServiceClient } from '@azure/storage-blob';
-import { BLOB_CONTAINER, BLOB_PREFIX } from '../blob-config.mjs';
+// GCS専用ストレージシステム（Azure Blob削除済み）
+// このファイルは後方互換性のためのみ残されています
 
-// Blob Service Clientを取得する関数
+// Azure関連の関数は削除済み - GCSは lib/storage.mjs を使用
 export function getBlobServiceClient() {
-  const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
-  if (!connectionString) {
-    console.warn('AZURE_STORAGE_CONNECTION_STRING is not set');
-    return null;
-  }
-  return BlobServiceClient.fromConnectionString(connectionString);
+  console.warn('Azure BLOB Storage is deprecated, use STORAGE_MODE=gcs with lib/storage.mjs');
+  return null;
 }
 
 // パスを正規化する関数
 export function norm(p) {
   return p.replace(/\\/g, '/');
 }
-
-// コンテナ名のエクスポート
-export const containerName = BLOB_CONTAINER;
-
-// アップロードミドルウェアのモック (必要なら実装)
-// MulterはESMで直接使うのが難しいため、ここではプレースホルダー
-export const upload = {
-  single: (fieldName) => (req, res, next) => {
-    console.warn('Upload middleware not fully implemented in ESM shared module');
-    next();
-  }
-};

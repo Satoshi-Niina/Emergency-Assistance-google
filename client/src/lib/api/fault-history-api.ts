@@ -31,6 +31,7 @@ export interface FaultHistoryImage {
   fileSize?: string;
   description?: string;
   createdAt: string;
+  url?: string; // GCSの直接URLがある場合
 }
 
 export interface FaultHistoryCreateData {
@@ -181,15 +182,49 @@ export const importFromExports = async (force = false): Promise<{
 };
 
 /**
- * 敁Eー履歴画像�EURLを生戁E
+ * 故障履歴画像のURLを生成
+ * @param filenameOrImage ファイル名（chat-exports/images/... 形式）、または FaultHistoryImage オブジェクト
  */
-export const getFaultHistoryImageUrl = (filename: string): string => {
+export const getFaultHistoryImageUrl = (filenameOrImage: string | FaultHistoryImage): string => {
+  // FaultHistoryImageオブジェクトの場合
+  if (typeof filenameOrImage === 'object') {
+    // GCSの直接URLがある場合はそれを優先使用
+    if (filenameOrImage.filePath && filenameOrImage.filePath.startsWith('https://storage.googleapis.com/')) {
+      return filenameOrImage.filePath;
+    }
+    // relativePath（storage path）がある場合
+    if (filenameOrImage.relativePath) {
+      return getImageUrlFromPath(filenameOrImage.relativePath);
+    }
+    // fileNameを使用
+    return getImageUrlFromPath(filenameOrImage.fileName);
+  }
+
+  // 文字列の場合
+  return getImageUrlFromPath(filenameOrImage);
+};
+
+/**
+ * 画像パスからAPIのURLを生成
+ */
+function getImageUrlFromPath(imagePath: string): string {
   const baseUrl = import.meta.env.DEV
     ? ''
     : import.meta.env.VITE_API_BASE_URL || window.location.origin;
 
-  return `${baseUrl}/api/fault-history/images/${filename}`;
-};
+  // GCSの直接URLの場合はそのまま返す
+  if (imagePath.startsWith('https://storage.googleapis.com/')) {
+    return imagePath;
+  }
+
+  // chat-exports/images/ で始まる場合はそのパスを使用
+  let path = imagePath;
+  if (imagePath.startsWith('chat-exports/images/')) {
+    path = imagePath.replace('chat-exports/images/', '');
+  }
+
+  return `${baseUrl}/api/fault-history/images/${path}`;
+}
 
 /**
  * チャティングーエクスポ�Eトデータから敁Eー履歴を�E動保孁E

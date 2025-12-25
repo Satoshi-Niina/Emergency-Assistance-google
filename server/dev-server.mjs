@@ -28,11 +28,11 @@ console.log('  Working directory set to:', process.cwd());
 import { createApp } from './src/app.mjs';
 import { PORT as DEFAULT_PORT } from './src/config/env.mjs';
 import { initializeDatabase, ensureTables } from './src/infra/db.mjs';
-import { getBlobServiceClient, containerName } from './src/infra/blob.mjs';
+// Azure Blob関連のインポートは削除済み（GCS専用）
 import { spawn } from 'child_process';
 
 const PORT = process.env.PORT || DEFAULT_PORT || 8080;
-const VITE_PORT = 5173;
+const VITE_PORT = 5174;
 
 console.log('🚀 Starting Local Development Server...');
 console.log(`📊 Environment: development`);
@@ -42,38 +42,50 @@ console.log(`⚡ Vite Port: ${VITE_PORT}`);
 async function startupSequence() {
   console.log('🔄 Running startup sequence...');
   
-  // Database
+  // Database - CRITICAL
   try {
+    console.log('');
+    console.log('═══════════════════════════════════════');
+    console.log('  Database Initialization');
+    console.log('═══════════════════════════════════════');
+    
     const dbInitialized = initializeDatabase();
-    if (dbInitialized) {
-      console.log('✅ Database initialized');
-      await ensureTables();
-      console.log('✅ Tables ensured');
-    } else {
-      console.warn('⚠️ Database not available');
+    if (!dbInitialized) {
+      console.error('❌ CRITICAL: Database initialization failed');
+      console.error('❌ Application cannot start without database');
+      console.error('❌ Please check:');
+      console.error('   1. DATABASE_URL is set in .env file');
+      console.error('   2. PostgreSQL server is running');
+      console.error('   3. Database credentials are correct');
+      process.exit(1);
     }
+    
+    console.log('✅ Database pool initialized');
+    
+    // Wait for actual connection
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    await ensureTables();
+    console.log('✅ Database tables verified');
+    console.log('✅ Database ready for authentication');
+    console.log('');
   } catch (err) {
-    console.error('❌ Database setup error:', err.message);
+    console.error('❌ CRITICAL: Database setup error:', err.message);
+    console.error('❌ Stack:', err.stack);
+    console.error('❌ Application cannot continue without database');
+    process.exit(1);
   }
 
-  // Blob Storage
-  try {
-    const blobClient = getBlobServiceClient();
-    if (blobClient) {
-      const containerClient = blobClient.getContainerClient(containerName);
-      const exists = await containerClient.exists();
-      if (!exists) {
-        console.log(`📦 Creating container: ${containerName}`);
-        await containerClient.createIfNotExists();
-      } else {
-        console.log(`✅ Container exists: ${containerName}`);
-      }
-    } else {
-      console.warn('⚠️ Blob storage not available');
-    }
-  } catch (err) {
-    console.error('❌ Blob storage check failed:', err.message);
+  // Azure Blob Storage は使用しません（GCS専用システム）
+  console.log('');
+  console.log('═══════════════════════════════════════');
+  console.log('  Storage: Google Cloud Storage (GCS)');
+  console.log('═══════════════════════════════════════');
+  console.log(`✅ Storage Mode: ${process.env.STORAGE_MODE || 'local'}`);
+  if (process.env.STORAGE_MODE === 'gcs') {
+    console.log(`✅ GCS Bucket: ${process.env.GOOGLE_CLOUD_STORAGE_BUCKET || 'Not configured'}`);
   }
+  console.log('');
 }
 
 (async () => {

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { ImageUp, BrainCog, Copy } from 'lucide-react';
-import { useToast } from '../../hooks/use-toast.ts';
+import { useToast } from '../../hooks/use-toast';
 
 interface TextSelectionControlsProps {
   text: string;
@@ -56,11 +56,11 @@ export default function TextSelectionControls({
     setIsVisible(false);
   };
 
-  const handleChatGPT = () => {
-    // Create a custom event that the chat component can listen to
-    window.dispatchEvent(new CustomEvent('ask-chatgpt', { detail: { text } }));
-    setIsVisible(false);
-  };
+  // Google API機能のみを使用するため、ChatGPT機能は削除されました
+  // const handleChatGPT = () => {
+  //   window.dispatchEvent(new CustomEvent('ask-chatgpt', { detail: { text } }));
+  //   setIsVisible(false);
+  // };
 
   const handleCopy = () => {
     navigator.clipboard.writeText(text);
@@ -93,7 +93,8 @@ export default function TextSelectionControls({
         >
           <ImageUp className='h-5 w-5 text-primary' />
         </Button>
-        <Button
+        {/* Google API機能のみを使用するため、ChatGPT機能は削除されました */}
+        {/* <Button
           variant='ghost'
           size='icon'
           className='p-1 hover:bg-neutral-100 rounded mr-1'
@@ -101,7 +102,7 @@ export default function TextSelectionControls({
           onClick={handleChatGPT}
         >
           <BrainCog className='h-5 w-5 text-primary' />
-        </Button>
+        </Button> */}
         <Button
           variant='ghost'
           size='icon'

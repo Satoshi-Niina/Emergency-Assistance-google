@@ -362,21 +362,20 @@ export default function MachineManagementPage() {
 
   return (
     <div className="flex-1 overflow-y-auto p-4 md:p-6 max-w-7xl mx-auto w-full bg-gradient-to-br from-blue-50 to-indigo-50">
-      <div className="mb-6">
-        <div className="flex items-center gap-4 mb-4">
-          <Link to="/settings">
-            <Button variant="outline" size="sm">
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              設定に戻る
-            </Button>
-          </Link>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-3xl font-bold flex items-center bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+            <Wrench className="mr-3 h-8 w-8 text-indigo-500" />
+            機種機械番号管理
+          </h1>
+          <p className="text-blue-600 mt-2">機種と機械番号の詳細管理を行います</p>
         </div>
-
-        <h1 className="text-3xl font-bold flex items-center bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-          <Wrench className="mr-3 h-8 w-8 text-indigo-500" />
-          機種機械番号管理
-        </h1>
-        <p className="text-blue-600 mt-2">機種と機械番号の詳細管理を行います</p>
+        <Link to="/settings">
+          <Button variant="outline" size="sm">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            設定に戻る
+          </Button>
+        </Link>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

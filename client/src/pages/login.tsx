@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { loginSchema } from '../lib/schema';
 import { useAuth } from '../context/auth-context';
-import { loginApi, meApi } from '../lib/auth-unified';
 import { Button } from '../components/ui/button';
 import {
   Card,
@@ -16,7 +15,6 @@ import {
 import {
   Form,
   FormControl,
-  FormField,
   FormItem,
   FormLabel,
   FormMessage,
@@ -30,29 +28,11 @@ export default function Login() {
   const [errorMessage, setErrorMessage] = useState('');
   const { login, user, isLoading: authLoading } = useAuth();
   const navigate = useNavigate();
-  const location = useLocation();
 
-  console.log('🔧 Login コンポーネント レンダリング:', {
-    authLoading,
-    hasUser: !!user,
-    username: user?.username,
-    isLoading,
-    errorMessage,
-  });
-
-  // Redirect if already logged in (but only after proper authentication)
+  // ログイン済みユーザーはチャット画面にリダイレクト
   useEffect(() => {
-    console.log('🔍 ログインページ - 認証状態確認:', {
-      authLoading,
-      hasUser: !!user,
-      username: user?.username,
-    });
-
     if (!authLoading && user && user.username) {
-      console.log('✅ ログイン済みユーザーを検出 - チャット画面に遷移');
       navigate('/chat', { replace: true });
-    } else if (!authLoading && !user) {
-      console.log('❌ 未ログインユーザー - ログイン画面を表示');
     }
   }, [user, authLoading, navigate]);
 
@@ -66,8 +46,6 @@ export default function Login() {
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    console.debug('[login] submit', { usernameLen: username.length });
-    console.trace('[login] submit trace');
     setErrorMessage('');
     if (isLoading) return;
     if (!username.trim() || !password) {
@@ -76,59 +54,31 @@ export default function Login() {
     }
     setIsLoading(true);
     try {
-      console.log('🔐 ログイン試行開始:', { username: username.trim() });
-      
-      // 認証コンテキストのlogin関数を使用
       await login(username.trim(), password);
-      console.log('✅ ログイン成功: チャット画面に遷移');
-      
-      // ログイン成功後、チャット画面に遷移
       navigate('/chat');
     } catch (e: any) {
-      console.warn('[login] ログインエラー:', e);
-
-      // エラーメッセージを日本語化
       let errorMsg = 'ログインに失敗しました';
       if (e?.message) {
         if (e.message.includes('500')) {
-          errorMsg =
-            'サーバーエラーが発生しました。しばらく時間をおいてから再度お試しください。';
+          errorMsg = 'サーバーエラーが発生しました。しばらく時間をおいてから再度お試しください。';
         } else if (e.message.includes('401')) {
           errorMsg = 'ユーザー名またはパスワードが正しくありません。';
         } else if (e.message.includes('ネットワーク')) {
           errorMsg = 'ネットワーク接続を確認してください。';
         } else if (e.message.includes('バックエンド')) {
-          errorMsg =
-            'サーバーに接続できません。しばらく時間をおいてから再度お試しください。';
+          errorMsg = 'サーバーに接続できません。しばらく時間をおいてから再度お試しください。';
         } else {
           errorMsg = e.message;
         }
       }
-
       setErrorMessage(errorMsg);
     } finally {
       setIsLoading(false);
     }
   };
-  // グローバルsubmit監視（デバッグ用）
-  useEffect(() => {
-    const h = (ev: SubmitEvent) =>
-      console.debug('[login] document submit caught', ev);
-    document.addEventListener('submit', h, true);
-    return () => document.removeEventListener('submit', h, true);
-  }, []);
-
-  // フォームの状態を監視
-  useEffect(() => {
-    const subscription = form.watch(value => {
-      console.log('📝 フォーム値変更:', value);
-    });
-    return () => subscription.unsubscribe();
-  }, [form]);
 
   // 認証状態読み込み中の表示
   if (authLoading) {
-    console.log('⏳ Login: 認証状態読み込み中、ローディング画面を表示');
     return (
       <div className='min-h-screen w-full flex items-center justify-center bg-gradient-to-b from-primary/10 to-primary/5 p-4'>
         <div className='text-center'>
@@ -138,8 +88,6 @@ export default function Login() {
       </div>
     );
   }
-
-  console.log('✅ Login: 認証状態確認完了、ログインフォームを表示');
 
   return (
     <div className='min-h-screen w-full flex items-center justify-center bg-gradient-to-b from-primary/10 to-primary/5 p-4'>
@@ -242,20 +190,6 @@ export default function Login() {
                 >
                   {isLoading ? 'ログイン中...' : 'ログイン'}
                 </Button>
-                {/* デバッグ用隠しボタン */}
-                <button
-                  type='button'
-                  onClick={async () => {
-                    console.debug('[login] force send');
-                    await loginApi(username.trim(), password);
-                    const me = await meApi();
-                    console.debug('[login] me after force', me);
-                  }}
-                  style={{ display: 'none' }}
-                  data-testid='force-login'
-                >
-                  force
-                </button>
               </form>
             </Form>
           </CardContent>

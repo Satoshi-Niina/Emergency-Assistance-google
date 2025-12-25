@@ -15,10 +15,10 @@ export default async function usersHandler(req, res) {
       console.log('[api/users] Fetching all users');
       
       try {
-        // 生のSQLクエリで直接データを取得
+        // 生のSQLクエリで直接データを取得（master_dataスキーマを明示）
         const result = await dbQuery(`
-          SELECT id, username, display_name, role, department, description, created_at
-          FROM users
+          SELECT id, username, display_name, role, department, created_at
+          FROM master_data.users
           ORDER BY created_at DESC
         `);
 
@@ -42,7 +42,7 @@ export default async function usersHandler(req, res) {
     // POSTリクエスト: ユーザー作成
     if (method === 'POST') {
       console.log('[api/users] POST request received:', req.body);
-      const { username, password, display_name, role, department, description } = req.body;
+      const { username, password, display_name, role, department } = req.body;
       
       if (!username || !password) {
         console.error('[api/users] Missing required fields:', { username: !!username, password: !!password });
@@ -55,17 +55,17 @@ export default async function usersHandler(req, res) {
       
       try {
         const result = await dbQuery(
-          `INSERT INTO users (username, password, display_name, role, department, description)
-           VALUES ($1, $2, $3, $4, $5, $6)
+          `INSERT INTO users (username, password, display_name, role, department)
+           VALUES ($1, $2, $3, $4, $5)
            RETURNING id, username, display_name, role, department, created_at`,
-          [username, hashedPassword, display_name, role || 'user', department, description]
+          [username, hashedPassword, display_name, role || 'user', department]
         );
         
         console.log('[api/users] User created successfully:', result.rows[0].id);
         
         // 全ユーザー一覧を再取得して返す（フロントエンドのusers配列互換性のため）
         const allUsers = await dbQuery(`
-          SELECT id, username, display_name, role, department, description, created_at
+          SELECT id, username, display_name, role, department, created_at
           FROM users
           ORDER BY created_at DESC
         `);
@@ -88,7 +88,7 @@ export default async function usersHandler(req, res) {
         
         // 全ユーザー一覧を再取得して返す
         const allUsers = await dbQuery(`
-          SELECT id, username, display_name, role, department, description, created_at
+          SELECT id, username, display_name, role, department, created_at
           FROM users
           ORDER BY created_at DESC
         `);
@@ -106,10 +106,10 @@ export default async function usersHandler(req, res) {
     // PUTリクエスト: ユーザー更新
     if (method === 'PUT' && id) {
       console.log('[api/users] PUT request received for user:', id, 'Data:', req.body);
-      const { password, display_name, role, department, description } = req.body;
+      const { password, display_name, role, department } = req.body;
       
       try {
-        let query = 'UPDATE users SET ';
+        let query = 'UPDATE master_data.users SET ';
         const params = [];
         const updates = [];
         let paramIndex = 1;
@@ -140,10 +140,6 @@ export default async function usersHandler(req, res) {
           updates.push(`department = $${paramIndex++}`);
           params.push(department);
         }
-        if (description !== undefined) {
-          updates.push(`description = $${paramIndex++}`);
-          params.push(description);
-        }
 
         if (updates.length === 0) {
           console.error('[api/users] No fields to update for user:', id);
@@ -165,7 +161,7 @@ export default async function usersHandler(req, res) {
         
         // 全ユーザー一覧を再取得して返す
         const allUsers = await dbQuery(`
-          SELECT id, username, display_name, role, department, description, created_at
+          SELECT id, username, display_name, role, department, created_at
           FROM users
           ORDER BY created_at DESC
         `);

@@ -2,7 +2,7 @@ import fs from 'fs';
 import { join } from 'path';
 import { dbQuery } from '../../infra/db.mjs';
 import { isAzureEnvironment } from '../../config/env.mjs';
-import { getBlobServiceClient, containerName } from '../../infra/blob.mjs';
+// Azure Blobインポート削除済み
 
 export default async function (req, res) {
   try {
@@ -25,11 +25,15 @@ export default async function (req, res) {
 
         console.log(`🔍 ナレッジベース検索: "${query}", limit: ${limit}`);
 
-        const knowledgeBaseDir = join(process.cwd(), 'knowledge-base', 'documents');
+        // マニュアルディレクトリ（アップロードされたファイル）
+        const manualsDir = join(process.cwd(), 'knowledge-base', 'manuals', 'processed');
+        // チャット履歴ディレクトリ（エクスポートされた履歴）
+        const historyDir = join(process.cwd(), 'knowledge-base', 'history', 'processed');
         const results = [];
 
-        if (!fs.existsSync(knowledgeBaseDir)) {
-          console.warn('⚠️ knowledge-base/documents ディレクトリが存在しません');
+        // 両方のディレクトリが存在しない場合
+        if (!fs.existsSync(manualsDir) && !fs.existsSync(historyDir)) {
+          console.warn('⚠️ manuals/processed および history/processed ディレクトリが存在しません');
           return res.json({
             success: true,
             results: [],
@@ -38,26 +42,39 @@ export default async function (req, res) {
           });
         }
 
-        // documentsディレクトリ内の各ドキュメントを検索
-        const docDirs = fs.readdirSync(knowledgeBaseDir).filter(item => {
-          const itemPath = join(knowledgeBaseDir, item);
-          return fs.statSync(itemPath).isDirectory();
-        });
+        // メタデータファイルを検索（.json）
+        const metadataFiles = [];
+        
+        // マニュアルディレクトリからメタデータを収集
+        if (fs.existsSync(manualsDir)) {
+          const manualFiles = fs.readdirSync(manualsDir)
+            .filter(f => f.endsWith('.json'))
+            .map(f => ({ path: join(manualsDir, f), source: 'manual' }));
+          metadataFiles.push(...manualFiles);
+        }
+
+        // チャット履歴ディレクトリからメタデータを収集
+        if (fs.existsSync(historyDir)) {
+          const historyFiles = fs.readdirSync(historyDir)
+            .filter(f => f.endsWith('.json'))
+            .map(f => ({ path: join(historyDir, f), source: 'history' }));
+          metadataFiles.push(...historyFiles);
+        }
+
+        console.log(`📁 検索対象メタデータファイル: ${metadataFiles.length}件`);
 
         const searchTerms = query.toLowerCase().split(/\s+/).filter(term => term.length > 0);
 
-        for (const dir of docDirs) {
+        for (const { path: metadataPath, source } of metadataFiles) {
           try {
-            const docDir = join(knowledgeBaseDir, dir);
-            const metadataPath = join(docDir, 'metadata.json');
-            const contentPath = join(docDir, 'content.txt');
+            // メタデータファイルを読み込む
+            const metadataContent = fs.readFileSync(metadataPath, 'utf8');
+            const metadata = JSON.parse(metadataContent);
 
-            if (!fs.existsSync(metadataPath) || !fs.existsSync(contentPath)) {
-              continue;
-            }
-
-            const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
-            const content = fs.readFileSync(contentPath, 'utf8');
+            // チャンクからコンテンツを抽出
+            const content = metadata.chunks
+              ? metadata.chunks.map(chunk => chunk.text || '').join(' ')
+              : (metadata.content || '');
 
             // スコア計算
             let score = 0;
@@ -70,17 +87,18 @@ export default async function (req, res) {
 
             if (score > 0) {
               results.push({
-                id: dir,
+                id: metadata.id || metadataPath,
                 title: metadata.title || 'タイトルなし',
                 content: content.substring(0, 300) + (content.length > 300 ? '...' : ''),
                 score: score / searchTerms.length, // 正規化されたスコア
                 category: metadata.category || 'uncategorized',
-                type: metadata.type || 'document',
-                createdAt: metadata.createdAt
+                type: metadata.type || (source === 'history' ? 'chat-history' : 'document'),
+                source: metadata.source || source,
+                createdAt: metadata.createdAt || metadata.timestamp
               });
             }
           } catch (error) {
-            console.warn(`ドキュメント読み込みエラー: ${dir}`, error);
+            console.warn(`メタデータ読み込みエラー: ${metadataPath}`, error.message);
           }
         }
 
@@ -189,7 +207,6 @@ export default async function (req, res) {
       console.log('[knowledge-base] Environment check:', {
         NODE_ENV: process.env.NODE_ENV,
         STORAGE_MODE: process.env.STORAGE_MODE,
-        hasStorageConnectionString: !!process.env.AZURE_STORAGE_CONNECTION_STRING,
         isAzureEnvironment: useAzure
       });
 
@@ -214,31 +231,35 @@ export default async function (req, res) {
 
           if (blobServiceClient) {
             const containerClient = blobServiceClient.getContainerClient(containerName);
-            const prefix = 'knowledge-base/documents/';
+            
+            // manuals/processed/ と history/processed/ の両方を検索
+            const prefixes = ['manuals/processed/', 'history/processed/'];
 
-            for await (const blob of containerClient.listBlobsFlat({ prefix })) {
-              if (!blob.name.endsWith('.json')) continue;
+            for (const prefix of prefixes) {
+              for await (const blob of containerClient.listBlobsFlat({ prefix })) {
+                if (!blob.name.endsWith('.json')) continue;
 
-              try {
-                const blobClient = containerClient.getBlobClient(blob.name);
-                const downloadResponse = await blobClient.download();
-                const chunks = [];
+                try {
+                  const blobClient = containerClient.getBlobClient(blob.name);
+                  const downloadResponse = await blobClient.download();
+                  const chunks = [];
 
-                if (downloadResponse.readableStreamBody) {
-                  for await (const chunk of downloadResponse.readableStreamBody) {
-                    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+                  if (downloadResponse.readableStreamBody) {
+                    for await (const chunk of downloadResponse.readableStreamBody) {
+                      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+                    }
+                    const buffer = Buffer.concat(chunks);
+                    const data = JSON.parse(buffer.toString('utf8'));
+
+                    if (Array.isArray(data)) {
+                      rows.push(...data);
+                    } else if (data.title && (data.content || data.chunks)) {
+                      rows.push(data);
+                    }
                   }
-                  const buffer = Buffer.concat(chunks);
-                  const data = JSON.parse(buffer.toString('utf8'));
-
-                  if (Array.isArray(data)) {
-                    rows.push(...data);
-                  } else if (data.title && data.content) {
-                    rows.push(data);
-                  }
+                } catch (blobError) {
+                  console.warn(`[knowledge-base] AZURE: Failed to load blob ${blob.name}:`, blobError.message);
                 }
-              } catch (blobError) {
-                console.warn(`[knowledge-base] AZURE: Failed to load blob ${blob.name}:`, blobError.message);
               }
             }
             console.log(`[knowledge-base] AZURE: ✅ Loaded ${rows.length} documents from Blob storage`);

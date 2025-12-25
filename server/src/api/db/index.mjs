@@ -5,10 +5,11 @@ const { Pool } = pg;
 const dbConfig = {
   connectionString:
     process.env.DATABASE_URL || process.env.POSTGRES_CONNECTION_STRING,
-  ssl: {
+  // ローカル環境ではSSLなし、本番環境(Azure)ではSSL有効
+  ssl: process.env.NODE_ENV === 'production' ? {
     require: true,
     rejectUnauthorized: false
-  }, // Azure PostgreSQL用
+  } : false,
   max: 5, // 接続プールサイズを削減
   idleTimeoutMillis: 30000, // アイドルタイムアウト
   connectionTimeoutMillis: 60000, // 接続タイムアウトを60秒
@@ -58,22 +59,7 @@ export const db = {
     const pool = initializePool();
 
     if (!pool) {
-      console.log('🔍 モックデータベースを使用:', query);
-      // モックデータを返す
-      if (query.includes('SELECT') && query.includes('users')) {
-        return [
-          {
-            id: 'default-user-id',
-            username: 'admin',
-            display_name: '管理者',
-            role: 'admin',
-            department: 'システム管理部',
-            description: 'システム管理者',
-            created_at: new Date().toISOString(),
-          },
-        ];
-      }
-      return [];
+      throw new Error('データベース接続プールが初期化されていません。DATABASE_URLを確認してください。');
     }
 
     try {
@@ -82,36 +68,17 @@ export const db = {
       // タイムアウト付きでクエリを実行
       const queryPromise = pool.query(query, params);
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Query timeout')), 3000); // 3秒でタイムアウト
+        setTimeout(() => reject(new Error('Query timeout')), 30000); // 30秒でタイムアウト
       });
 
       const result = await Promise.race([queryPromise, timeoutPromise]);
       return result.rows;
     } catch (error) {
       console.error('❌ データベースクエリエラー:', error.message);
-
-      // タイムアウトの場合はモックデータを返す
-      if (
-        error.message.includes('timeout') ||
-        error.message.includes('Connection terminated')
-      ) {
-        console.log('⚠️ データベース接続タイムアウト、モックデータを返します');
-        if (query.includes('SELECT') && query.includes('users')) {
-          return [
-            {
-              id: 'mock-user-id',
-              username: 'niina',
-              display_name: '新納 智志',
-              role: 'admin',
-              department: 'システム管理部',
-              description: 'システム管理者',
-              created_at: new Date().toISOString(),
-            },
-          ];
-        }
-        return [];
-      }
-
+      console.error('クエリ:', query);
+      console.error('パラメータ:', params);
+      
+      // モックデータは返さず、エラーをそのまま投げる
       throw error;
     }
   },

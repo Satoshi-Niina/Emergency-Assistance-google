@@ -44,7 +44,7 @@ async function callOpenAIAPI(
 ): Promise<string> {
   try {
     const apiBase = import.meta.env.VITE_API_BASE_URL || '';
-    const response = await fetch(`${apiBase}/api/chatgpt`, {
+    const response = await fetch(`${apiBase}/api/gemini-chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

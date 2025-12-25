@@ -20,7 +20,7 @@ interface TabItem {
   title: string;
   path: string;
   icon: React.ReactNode;
-  adminOnly?: boolean;
+  requiredRole?: 'user' | 'operator' | 'admin'; // 必要な最小権限
   className?: string;
 }
 
@@ -30,13 +30,23 @@ export function Tabs() {
   const { user } = useAuth();
 
   // ユーザーロールに基づく表示制御
-  const isAdmin = user?.role === 'admin';
+  const userRole = user?.role || 'user';
+  
+  // 権限レベル: user < operator < admin
+  const hasPermission = (requiredRole?: 'user' | 'operator' | 'admin') => {
+    if (!requiredRole) return true; // 権限不要
+    if (userRole === 'admin') return true; // 管理者は全て閲覧可能
+    if (userRole === 'operator' && (requiredRole === 'user' || requiredRole === 'operator')) return true;
+    if (userRole === 'user' && requiredRole === 'user') return true;
+    return false;
+  };
 
   const tabs: TabItem[] = [
     {
       title: '応急処置サポート',
       path: '/chat',
       icon: <MessageSquare className='mr-2 h-5 w-5 text-blue-600' />,
+      requiredRole: 'user', // 全ユーザー
       className:
         'text-blue-600 font-bold text-lg border border-blue-300 rounded-md bg-blue-50',
     },
@@ -44,29 +54,29 @@ export function Tabs() {
       title: '履歴管理',
       path: '/history',
       icon: <History className='mr-2 h-4 w-4' />,
-      adminOnly: true, // 管理者のみ
+      requiredRole: 'user', // 全ユーザー
     },
     {
       title: '基礎データ管理',
       path: '/base-data',
       icon: <Wrench className='mr-2 h-4 w-4' />,
-      adminOnly: true, // 管理者のみ
+      requiredRole: 'admin', // システム管理者のみ
     },
     {
       title: '応急復旧データ管理',
       path: '/troubleshooting',
       icon: <FileText className='mr-2 h-4 w-4' />,
-      adminOnly: true, // 管理者のみ
+      requiredRole: 'operator', // 運用管理者以上
     },
     {
       title: '設定',
       path: '/settings',
       icon: <Settings className='mr-2 h-4 w-4' />,
-      adminOnly: true, // 管理者のみ
+      requiredRole: 'admin', // システム管理者のみ
     },
   ];
 
-  const filteredTabs = tabs.filter(tab => !tab.adminOnly || isAdmin);
+  const filteredTabs = tabs.filter(tab => hasPermission(tab.requiredRole));
 
   return (
     <div className='flex items-center space-x-2'>

@@ -27,22 +27,13 @@ export default async function (req, res) {
   }
 
   // Azure Storage接続テスト
-  let storageStatus = 'unknown';
-  let storageError = null;
+  let storageStatus = 'not_supported';
+  let storageError = 'Azure BLOB Storage is no longer supported, use STORAGE_MODE=gcs';
   try {
-    const { BlobServiceClient } = await import('@azure/storage-blob');
-    const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
-    const containerName =
-      process.env.AZURE_STORAGE_CONTAINER_NAME ||
-      process.env.BLOB_CONTAINER_NAME ||
-      'knowledge';
-    if (connectionString) {
-      const blobServiceClient =
-        BlobServiceClient.fromConnectionString(connectionString);
-      const containerClient =
-        blobServiceClient.getContainerClient(containerName);
-      await containerClient.exists();
-      storageStatus = 'connected';
+    const storageMode = process.env.STORAGE_MODE;
+    if (storageMode === 'gcs') {
+      storageStatus = 'gcs_mode';
+      storageError = null;
     } else {
       storageStatus = 'skipped (no connection string)';
     }

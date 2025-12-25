@@ -1,11 +1,13 @@
-import { getBlobServiceClient, containerName, norm } from '../../infra/blob.mjs';
-import { isAzureEnvironment } from '../../config/env.mjs';
+// GCS専用ストレージシステム（Azure削除済み）
 import { chunkText } from '../../../services/chunker.js';
-import { embedTexts } from '../../../services/embedding.js';
+import { uploadFile, isGCSStorage } from '../../lib/storage.mjs';
+// OpenAI Embedding機能は使用しないためコメントアウト
+// import { embedTexts } from '../../../services/embedding.js';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const pdf = require('pdf-parse');
 import path from 'path';
+import * as fs from 'fs/promises';
 
 export default async function (req, res) {
   try {
@@ -50,35 +52,8 @@ export default async function (req, res) {
           buffer = Buffer.isBuffer(fileBuffer) ? fileBuffer : Buffer.from(fileBuffer);
         } else {
           // filePathから読み込む（元ファイル保存済み）
-          const useAzure = isAzureEnvironment();
-          
-          if (useAzure) {
-            // Azure Blob Storage
-            const blobServiceClient = getBlobServiceClient();
-            if (!blobServiceClient) {
-              throw new Error('Blob Service unavailable');
-            }
-            const containerClient = blobServiceClient.getContainerClient(containerName);
-            let blobName = filePath;
-            if (blobName.startsWith('blob://')) {
-              const url = new URL(blobName);
-              blobName = url.pathname.substring(1);
-            }
-
-            console.log('[api/data-processor] Downloading blob:', blobName);
-            const blobClient = containerClient.getBlobClient(blobName);
-
-            const downloadResponse = await blobClient.download();
-            const chunks = [];
-            for await (const chunk of downloadResponse.readableStreamBody) {
-              chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-            }
-            buffer = Buffer.concat(chunks);
-          } else {
-            // Local Filesystem
-            const fs = await import('fs/promises');
-            buffer = await fs.readFile(filePath);
-          }
+          console.log('[api/data-processor] Reading file from:', filePath);
+          buffer = await fs.readFile(filePath);
         }
 
         // Extract text based on type
@@ -103,20 +78,13 @@ export default async function (req, res) {
       const chunks = chunkText(textContent, { size: 800, overlap: 80 });
       console.log('[api/data-processor] Chunked into', chunks.length, 'parts');
 
-      // 3. Embedding
-      // Prepare texts for embedding
-      const textsToEmbed = chunks.map(c => c.content);
-      let embeddings = [];
-      try {
-        embeddings = await embedTexts(textsToEmbed);
-      } catch (embedError) {
-        console.error('[api/data-processor] Embedding failed:', embedError);
-        return res.status(500).json({ success: false, error: 'Embedding failed', details: embedError.message });
-      }
+      // 3. Embedding機能は無効化（Geminiで直接テキスト検索を使用）
+      console.log('[api/data-processor] ⚠️ Embedding機能はスキップ（Geminiでキーワード検索を使用）');
+      const embeddings = []; // 空配列
 
       // 4. Save Metadata (Chunks + Embeddings)
-      // We will save this as a JSON file in "knowledge-base/processed/metadata/"
-      // The format should match what SearchService expects.
+      // メタデータは処理済みデータとしてmanuals/processed/に保存
+      // 元ファイルはmanuals/に保存済み
 
       const metadata = {
         id: `doc-${Date.now()}`,
@@ -126,34 +94,35 @@ export default async function (req, res) {
         timestamp: new Date().toISOString(),
         chunks: chunks.map((chunk, i) => ({
           ...chunk,
-          embedding: embeddings[i]?.embedding || [],
+          // embedding機能は無効化（Geminiキーワード検索で対応）
         })),
-        // Flatten key fields for Fuse.js
-        content: textContent.substring(0, 10000), // Limit for search index size if needed
-        keywords: [] // TODO: Generate keywords?
+        // Geminiでの検索用にテキスト全体を保持
+        content: textContent.substring(0, 10000),
+        fullContent: textContent, // 全文保存
+        keywords: [] // 将来的にキーワード抽出機能を追加可能
       };
 
       const metadataFileName = `doc-${Date.now()}.json`;
-      const metadataBlobPath = `knowledge-base/documents/${metadataFileName}`;
+      const metadataBlobPath = `manuals/processed/${metadataFileName}`;
+
+      const useGCS = isGCSStorage();
+      console.log('[api/data-processor] 📁 保存環境:', useGCS ? 'Google Cloud Storage' : 'Local Filesystem');
+      console.log('[api/data-processor] 📁 メタデータ保存パス:', metadataBlobPath);
+      console.log('[api/data-processor] 📊 チャンク数:', chunks.length);
+      console.log('[api/data-processor] 📊 エンベディング数:', embeddings.length);
 
       try {
-        if (useAzure) {
-          const blobServiceClient = getBlobServiceClient();
-          const containerClient = blobServiceClient.getContainerClient(containerName);
-          const blobClient = containerClient.getBlockBlobClient(metadataBlobPath);
-
-          const jsonString = JSON.stringify(metadata, null, 2);
-          await blobClient.upload(jsonString, jsonString.length);
-          console.log('[api/data-processor] Metadata saved to Blob:', metadataBlobPath);
-        } else {
-          // Local save
-          const fs = await import('fs/promises');
-          const targetDir = path.join(process.cwd(), 'knowledge-base', 'documents');
-          await fs.mkdir(targetDir, { recursive: true });
-          await fs.writeFile(path.join(targetDir, metadataFileName), JSON.stringify(metadata, null, 2));
-        }
+        const jsonBuffer = Buffer.from(JSON.stringify(metadata, null, 2), 'utf8');
+        await uploadFile(jsonBuffer, metadataBlobPath, 'application/json');
+        console.log('[api/data-processor] ✅ メタデータを保存:', metadataBlobPath);
+        console.log('[api/data-processor] 🔍 保存先:', useGCS ? `GCS Bucket: ${process.env.GOOGLE_CLOUD_STORAGE_BUCKET}` : 'Local storage');
       } catch (saveError) {
-        console.error('[api/data-processor] Failed to save metadata:', saveError);
+        console.error('[api/data-processor] ❌ メタデータ保存失敗:', saveError);
+        console.error('[api/data-processor] ❌ エラー詳細:', {
+          message: saveError.message,
+          stack: saveError.stack,
+          code: saveError.code
+        });
         return res.status(500).json({ success: false, error: 'Metadata save failed', details: saveError.message });
       }
 

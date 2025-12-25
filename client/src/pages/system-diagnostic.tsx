@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import {
   Card,
@@ -10,12 +11,13 @@ import { Badge } from '../components/ui/badge';
 import { Separator } from '../components/ui/separator';
 import {
   Database,
-  MessageSquare,
+  Brain,
   CheckCircle,
   XCircle,
   Loader2,
   RefreshCw,
   AlertCircle,
+  ArrowLeft,
 } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
 
@@ -35,11 +37,11 @@ interface CheckResult {
 export default function SystemDiagnosticPage() {
   const { toast } = useToast();
   const [dbCheckResult, setDbCheckResult] = useState<CheckResult | null>(null);
-  const [gptCheckResult, setGptCheckResult] = useState<CheckResult | null>(
+  const [geminiCheckResult, setGeminiCheckResult] = useState<CheckResult | null>(
     null
   );
   const [isCheckingDb, setIsCheckingDb] = useState(false);
-  const [isCheckingGpt, setIsCheckingGpt] = useState(false);
+  const [isCheckingGemini, setIsCheckingGemini] = useState(false);
 
   // APIのベースURLを取得
   const apiBaseUrl =
@@ -108,13 +110,14 @@ export default function SystemDiagnosticPage() {
     }
   };
 
-  const checkGptConnection = async () => {
-    setIsCheckingGpt(true);
-    setGptCheckResult(null);
+  const checkGeminiConnection = async () => {
+    setIsCheckingGemini(true);
+    setGeminiCheckResult(null);
 
     try {
-      const response = await fetch(buildApiPath('/gpt-check'), {
-        method: 'POST',
+      // _diag/gemini-check エンドポイントを使用
+      const response = await fetch(buildApiPath('/_diag/gemini-check'), {
+        method: 'GET',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -122,60 +125,71 @@ export default function SystemDiagnosticPage() {
 
       const result = await response.json();
 
-      // サーバーのレスポンス形式に合わせて変換
-      const checkResult = {
+      const checkResult: CheckResult = {
         success: result.success,
         status: result.success ? 'OK' : 'ERROR',
         message: result.message,
-        error: result.error,
-        details: result.details,
-        timestamp: result.timestamp
+        error: result.success ? undefined : result.message,
+        details: result.details?.error || result.details?.testResponse,
+        timestamp: result.details?.timestamp || new Date().toISOString()
       };
-      setGptCheckResult(checkResult);
+      setGeminiCheckResult(checkResult);
 
       if (checkResult.status === 'OK') {
         toast({
-          title: 'GPT接続確認',
-          description: 'GPT接続が正常です',
+          title: 'Gemini接続確認',
+          description: 'Gemini API接続が正常です',
           variant: 'default',
         });
       } else {
         toast({
-          title: 'GPT接続確認',
-          description: checkResult.error || checkResult.message || 'GPT接続エラー',
+          title: 'Gemini接続確認',
+          description: checkResult.error || 'Gemini API接続エラー',
           variant: 'destructive',
         });
       }
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'ネットワークエラー';
-      setGptCheckResult({
+      setGeminiCheckResult({
+        success: false,
         status: 'ERROR',
         error: errorMessage,
       });
 
       toast({
-        title: 'GPT接続確認',
+        title: 'Gemini接続確認',
         description: errorMessage,
         variant: 'destructive',
       });
     } finally {
-      setIsCheckingGpt(false);
+      setIsCheckingGemini(false);
     }
   };
 
   const runAllChecks = async () => {
-    await checkDatabaseConnection();
-    await checkGptConnection();
+    // 並列実行
+    await Promise.all([
+      checkDatabaseConnection(),
+      checkGeminiConnection()
+    ]);
   };
 
   return (
     <div className='container mx-auto p-6 max-w-4xl'>
-      <div className='mb-8'>
-        <h1 className='text-3xl font-bold mb-2'>システム診断</h1>
-        <p className='text-muted-foreground'>
-          データベース接続とGPT接続の状態を確認できます
-        </p>
+      <div className='flex items-center justify-between mb-6'>
+        <div>
+          <h1 className='text-3xl font-bold mb-2'>システム診断</h1>
+          <p className='text-muted-foreground'>
+            データベース接続とGemini接続の状態を確認できます
+          </p>
+        </div>
+        <Link to='/settings'>
+          <Button variant='outline' size='sm'>
+            <ArrowLeft className='mr-2 h-4 w-4' />
+            設定に戻る
+          </Button>
+        </Link>
       </div>
 
       {/* 全体実行ボタン */}
@@ -190,10 +204,10 @@ export default function SystemDiagnosticPage() {
             </div>
             <Button
               onClick={runAllChecks}
-              disabled={isCheckingDb || isCheckingGpt}
+              disabled={isCheckingDb || isCheckingGemini}
               className='flex items-center gap-2'
             >
-              {isCheckingDb || isCheckingGpt ? (
+              {isCheckingDb || isCheckingGemini ? (
                 <Loader2 className='h-4 w-4 animate-spin' />
               ) : (
                 <RefreshCw className='h-4 w-4' />
@@ -271,26 +285,26 @@ export default function SystemDiagnosticPage() {
           </CardContent>
         </Card>
 
-        {/* GPT接続確認 */}
+        {/* Gemini接続確認 */}
         <Card>
           <CardHeader>
             <CardTitle className='flex items-center gap-2'>
-              <MessageSquare className='h-5 w-5' />
-              GPT接続確認
+              <Brain className='h-5 w-5' />
+              Gemini API接続確認
             </CardTitle>
           </CardHeader>
           <CardContent className='space-y-4'>
             <div className='flex items-center justify-between'>
               <p className='text-sm text-muted-foreground'>
-                OpenAI APIへの接続状態を確認します
+                Google Gemini APIへの接続状態を確認します
               </p>
               <Button
-                onClick={checkGptConnection}
-                disabled={isCheckingGpt}
+                onClick={checkGeminiConnection}
+                disabled={isCheckingGemini}
                 size='sm'
                 variant='outline'
               >
-                {isCheckingGpt ? (
+                {isCheckingGemini ? (
                   <Loader2 className='h-4 w-4 animate-spin' />
                 ) : (
                   <CheckCircle className='h-4 w-4' />
@@ -299,44 +313,48 @@ export default function SystemDiagnosticPage() {
               </Button>
             </div>
 
-            {gptCheckResult && (
+            {geminiCheckResult && (
               <div className='space-y-3'>
                 <Separator />
                 <div className='flex items-center gap-2'>
-                  {gptCheckResult.status === 'OK' ? (
+                  {geminiCheckResult.status === 'OK' ? (
                     <CheckCircle className='h-4 w-4 text-green-500' />
                   ) : (
                     <XCircle className='h-4 w-4 text-red-500' />
                   )}
                   <Badge
                     variant={
-                      gptCheckResult.status === 'OK' ? 'default' : 'destructive'
+                      geminiCheckResult.status === 'OK' ? 'default' : 'destructive'
                     }
                   >
-                    {gptCheckResult.status === 'OK' ? '接続成功' : '接続失敗'}
+                    {geminiCheckResult.status === 'OK' ? '接続成功' : '接続失敗'}
                   </Badge>
                 </div>
 
-                {gptCheckResult.status === 'OK' && gptCheckResult.message && (
+                {geminiCheckResult.status === 'OK' && geminiCheckResult.message && (
                   <div className='text-sm'>
-                    <span className='font-medium'>GPT応答:</span>
+                    <span className='font-medium'>Gemini応答:</span>
                     <div className='mt-1 p-2 bg-gray-50 rounded text-xs max-h-20 overflow-y-auto'>
-                      {gptCheckResult.message}
+                      {geminiCheckResult.message}
                     </div>
+                    {geminiCheckResult.details && (
+                      <div className='mt-1 text-xs text-muted-foreground italic truncate'>
+                        テスト応答: {geminiCheckResult.details}
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {gptCheckResult.status === 'ERROR' &&
-                  (gptCheckResult.error || gptCheckResult.message) && (
+                {geminiCheckResult.status === 'ERROR' &&
+                  (geminiCheckResult.error || geminiCheckResult.message) && (
                     <div className='text-sm text-red-600 bg-red-50 p-3 rounded-md'>
                       <div className='flex items-start gap-2'>
                         <AlertCircle className='h-4 w-4 mt-0.5 flex-shrink-0' />
                         <div className='flex-1'>
-                          <div className='font-medium'>{gptCheckResult.error}</div>
-                          <div className='text-red-500 mt-1'>{gptCheckResult.message}</div>
-                          {gptCheckResult.details && (
+                          <div className='font-medium'>{geminiCheckResult.error}</div>
+                          {geminiCheckResult.details && (
                             <div className='text-xs text-red-400 mt-1 font-mono'>
-                              {gptCheckResult.details}
+                              {geminiCheckResult.details}
                             </div>
                           )}
                         </div>
@@ -350,7 +368,7 @@ export default function SystemDiagnosticPage() {
       </div>
 
       {/* 診断結果サマリー */}
-      {dbCheckResult && gptCheckResult && (
+      {(dbCheckResult || geminiCheckResult) && (
         <Card className='mt-6'>
           <CardHeader>
             <CardTitle>診断結果サマリー</CardTitle>
@@ -360,29 +378,37 @@ export default function SystemDiagnosticPage() {
               <div className='flex items-center gap-2'>
                 <Database className='h-4 w-4' />
                 <span>PostgreSQL:</span>
-                <Badge
-                  variant={
-                    dbCheckResult.status === 'OK' ? 'default' : 'destructive'
-                  }
-                >
-                  {dbCheckResult.status === 'OK' ? '正常' : '異常'}
-                </Badge>
+                {dbCheckResult ? (
+                  <Badge
+                    variant={
+                      dbCheckResult.status === 'OK' ? 'default' : 'destructive'
+                    }
+                  >
+                    {dbCheckResult.status === 'OK' ? '正常' : '異常'}
+                  </Badge>
+                ) : (
+                  <span className='text-sm text-muted-foreground'>未実行</span>
+                )}
               </div>
               <div className='flex items-center gap-2'>
-                <MessageSquare className='h-4 w-4' />
-                <span>GPT:</span>
-                <Badge
-                  variant={
-                    gptCheckResult.status === 'OK' ? 'default' : 'destructive'
-                  }
-                >
-                  {gptCheckResult.status === 'OK' ? '正常' : '異常'}
-                </Badge>
+                <Brain className='h-4 w-4' />
+                <span>Gemini API:</span>
+                {geminiCheckResult ? (
+                  <Badge
+                    variant={
+                      geminiCheckResult.status === 'OK' ? 'default' : 'destructive'
+                    }
+                  >
+                    {geminiCheckResult.status === 'OK' ? '正常' : '異常'}
+                  </Badge>
+                ) : (
+                  <span className='text-sm text-muted-foreground'>未実行</span>
+                )}
               </div>
             </div>
 
-            {dbCheckResult.status === 'OK' &&
-              gptCheckResult.status === 'OK' && (
+            {dbCheckResult?.status === 'OK' &&
+              geminiCheckResult?.status === 'OK' && (
                 <div className='mt-4 p-3 bg-green-50 text-green-700 rounded-md'>
                   <div className='flex items-center gap-2'>
                     <CheckCircle className='h-4 w-4' />
@@ -391,8 +417,8 @@ export default function SystemDiagnosticPage() {
                 </div>
               )}
 
-            {(dbCheckResult.status === 'ERROR' ||
-              gptCheckResult.status === 'ERROR') && (
+            {(dbCheckResult?.status === 'ERROR' ||
+              geminiCheckResult?.status === 'ERROR') && (
                 <div className='mt-4 p-3 bg-yellow-50 text-yellow-700 rounded-md'>
                   <div className='flex items-center gap-2'>
                     <AlertCircle className='h-4 w-4' />

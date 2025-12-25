@@ -1,7 +1,8 @@
-import { getBlobServiceClient, containerName, norm } from '../../infra/blob.mjs';
+// Azure Blobインポート削除済み - GCSは lib/storage.mjs 使用
 import { isAzureEnvironment } from '../../config/env.mjs';
 import { chunkText } from '../../../services/chunker.js';
-import { embedTexts } from '../../../services/embedding.js';
+// OpenAI Embedding機能は使用しないためコメントアウト
+// import { embedTexts } from '../../../services/embedding.js';
 import path from 'path';
 
 export default async function (req, res) {
@@ -33,7 +34,7 @@ export default async function (req, res) {
     const useAzure = isAzureEnvironment();
     let jsonContent = null;
 
-    // 1. JSONファイルを読み込む
+    // 1. JSONファイルを読み込む（history/フォルダから）
     try {
       if (useAzure) {
         const blobServiceClient = getBlobServiceClient();
@@ -41,7 +42,7 @@ export default async function (req, res) {
           throw new Error('Blob Service unavailable');
         }
         const containerClient = blobServiceClient.getContainerClient(containerName);
-        const blobPath = `knowledge-base/exports/${fileName}`;
+        const blobPath = `history/${fileName}`;
         const blobClient = containerClient.getBlobClient(blobPath);
 
         console.log('[api/history-import] Downloading from blob:', blobPath);
@@ -55,7 +56,7 @@ export default async function (req, res) {
         jsonContent = JSON.parse(buffer.toString('utf8'));
       } else {
         const fs = await import('fs/promises');
-        const localPath = path.join(process.cwd(), 'knowledge-base', 'exports', fileName);
+        const localPath = path.join(process.cwd(), 'knowledge-base', 'history', fileName);
         const buffer = await fs.readFile(localPath);
         jsonContent = JSON.parse(buffer.toString('utf8'));
       }
@@ -101,32 +102,27 @@ export default async function (req, res) {
     console.log('[api/history-import] Chunked into', chunks.length, 'parts');
 
     // 4. 埋め込み生成
-    const textsToEmbed = chunks.map(c => c.content);
-    let embeddings = [];
-    try {
-      embeddings = await embedTexts(textsToEmbed);
-    } catch (embedError) {
-      console.error('[api/history-import] Embedding failed:', embedError);
-      return res.status(500).json({ success: false, error: 'Embedding failed', details: embedError.message });
-    }
+    // Embedding機能は無効化（Geminiで直接テキスト検索を使用）
+    console.log('[api/history-import] ⚠️ Embedding機能はスキップ（Geminiでキーワード検索を使用）');
+    const embeddings = []; // 空配列
 
-    // 5. メタデータとして保存（documents/に保存）
+    // 5. メタデータとして保存（history/processed/に保存）
     const metadata = {
       id: `history-${Date.now()}`,
       title: fileName.replace('.json', ''),
-      path: `knowledge-base/exports/${fileName}`,
+      path: `history/${fileName}`,
       source: 'history-export',
       timestamp: new Date().toISOString(),
       chunks: chunks.map((chunk, i) => ({
         ...chunk,
-        embedding: embeddings[i]?.embedding || [],
+        // embedding機能は無効化（Geminiキーワード検索で対応）
       })),
       content: textContent.substring(0, 10000),
       keywords: []
     };
 
     const metadataFileName = `history-${Date.now()}.json`;
-    const metadataBlobPath = `knowledge-base/documents/${metadataFileName}`;
+    const metadataBlobPath = `history/processed/${metadataFileName}`;
 
     try {
       if (useAzure) {
@@ -139,7 +135,7 @@ export default async function (req, res) {
         console.log('[api/history-import] Metadata saved to Blob:', metadataBlobPath);
       } else {
         const fs = await import('fs/promises');
-        const targetDir = path.join(process.cwd(), 'knowledge-base', 'documents');
+        const targetDir = path.join(process.cwd(), 'knowledge-base', 'history', 'processed');
         await fs.mkdir(targetDir, { recursive: true });
         await fs.writeFile(path.join(targetDir, metadataFileName), JSON.stringify(metadata, null, 2));
         console.log('[api/history-import] Metadata saved locally:', metadataFileName);

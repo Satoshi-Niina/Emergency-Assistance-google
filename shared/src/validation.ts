@@ -135,7 +135,7 @@ export const searchQuerySchema: any = z.object({
   limit: z.number().int().min(1).max(100).default(20),
   category: z.string().optional(),
   type: z
-    .enum(['all', 'documents', 'emergency-flows', 'images'])
+    .enum(['all', 'documents', 'troubleshooting', 'images'])
     .default('all'),
 });
 // ファイルアップロード関連のバリデーションスキーマ（ブラウザ環境でのみ使用）

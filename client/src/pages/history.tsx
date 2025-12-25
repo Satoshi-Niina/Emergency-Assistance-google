@@ -2348,7 +2348,7 @@ export default function HistoryPage() {
                         
                         // /api/images/chat-exports/exports/ のような2重パスを修正
                         cleanUrl = cleanUrl.replace('/chat-exports/exports/', '/chat-exports/');
-                        cleanUrl = cleanUrl.replace('/emergency-flows/exports/', '/emergency-flows/');
+                        cleanUrl = cleanUrl.replace('/troubleshooting/exports/', '/troubleshooting/');
                         
                         // 既に /api/images/ で始まっている場合は絶対URLに変換
                         if (cleanUrl.startsWith('/api/images/')) {

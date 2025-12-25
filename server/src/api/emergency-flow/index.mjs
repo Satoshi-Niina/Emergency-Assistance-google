@@ -2,8 +2,9 @@
 // /api/emergency-flow/* にマッピング
 
 import fs from 'fs';
-import { getBlobServiceClient, containerName, norm, upload } from '../../infra/blob.mjs';
-import { getOpenAIClient, isOpenAIAvailable } from '../../infra/openai.mjs';
+import { upload } from '../../infra/blob.mjs';
+// Azure Blob関連インポート削除済み - GCSは lib/storage.mjs 使用
+import { processGeminiRequest } from '../../lib/gemini.mjs';
 import { isAzureEnvironment } from '../../config/env.mjs';
 import path from 'path';
 
@@ -49,7 +50,6 @@ export default async function emergencyFlowHandler(req, res) {
       console.log('[api/emergency-flow/list] 環境チェック:', {
         NODE_ENV: process.env.NODE_ENV,
         STORAGE_MODE: process.env.STORAGE_MODE,
-        hasStorageConnectionString: !!process.env.AZURE_STORAGE_CONNECTION_STRING,
         isAzureEnvironment: useAzure
       });
       
@@ -228,7 +228,6 @@ export default async function emergencyFlowHandler(req, res) {
       console.log('[api/emergency-flow/detail] 環境チェック:', {
         NODE_ENV: process.env.NODE_ENV,
         STORAGE_MODE: process.env.STORAGE_MODE,
-        hasStorageConnectionString: !!process.env.AZURE_STORAGE_CONNECTION_STRING,
         isAzureEnvironment: useAzure
       });
 
@@ -338,7 +337,6 @@ export default async function emergencyFlowHandler(req, res) {
       console.log('[api/emergency-flow] Environment check:', {
         NODE_ENV: process.env.NODE_ENV,
         STORAGE_MODE: process.env.STORAGE_MODE,
-        hasStorageConnectionString: !!process.env.AZURE_STORAGE_CONNECTION_STRING,
         isAzureEnvironment: useAzure
       });
 
@@ -548,14 +546,13 @@ export default async function emergencyFlowHandler(req, res) {
         console.log('[api/emergency-flow/upload-image] Environment check:', {
           NODE_ENV: process.env.NODE_ENV,
           STORAGE_MODE: process.env.STORAGE_MODE,
-          hasStorageConnectionString: !!process.env.AZURE_STORAGE_CONNECTION_STRING,
           isAzureEnvironment: useAzure
         });
 
         // ローカル環境: ローカルファイルシステムのみ使用
         if (!useAzure) {
           console.log('[api/emergency-flow/upload-image] LOCAL: Using local filesystem');
-          const localDir = path.join(process.cwd(), 'knowledge-base', 'images', 'emergency-flows');
+          const localDir = path.join(process.cwd(), 'knowledge-base', 'images', 'troubleshooting');
           
           if (!fs.existsSync(localDir)) {
             fs.mkdirSync(localDir, { recursive: true });
@@ -565,7 +562,7 @@ export default async function emergencyFlowHandler(req, res) {
           fs.writeFileSync(localPath, req.file.buffer);
           
           console.log('[api/emergency-flow/upload-image] LOCAL: ✅ Saved to local filesystem:', localPath);
-          const imageUrl = `/api/images/emergency-flows/${fileName}`;
+          const imageUrl = `/api/images/troubleshooting/${fileName}`;
           
           return res.json({
             success: true,
@@ -589,7 +586,7 @@ export default async function emergencyFlowHandler(req, res) {
 
         const containerClient = blobServiceClient.getContainerClient(containerName);
         // norm()を使用してBLOB_PREFIXを自動適用
-        const blobName = norm(`images/emergency-flows/${fileName}`);
+        const blobName = norm(`images/troubleshooting/${fileName}`);
         console.log('[api/emergency-flow/upload-image] AZURE: Uploading to Blob:', blobName);
         const blockBlobClient = containerClient.getBlockBlobClient(blobName);
 
@@ -649,7 +646,6 @@ export default async function emergencyFlowHandler(req, res) {
       console.log('[api/emergency-flow/delete-image] Environment check:', {
         NODE_ENV: process.env.NODE_ENV,
         STORAGE_MODE: process.env.STORAGE_MODE,
-        hasStorageConnectionString: !!process.env.AZURE_STORAGE_CONNECTION_STRING,
         isAzureEnvironment: useAzure
       });
 
@@ -736,12 +732,10 @@ export default async function emergencyFlowHandler(req, res) {
       const timestamp = Date.now();
       let flowTemplate;
 
-      // OpenAI APIを使用してフロー生成
-      if (isOpenAIAvailable) {
-        console.log('[api/emergency-flow/generate] 🤖 Using OpenAI to generate flow for keyword:', keyword);
-        const openai = getOpenAIClient();
+      // Google Gemini APIを使用してフロー生成
+      console.log('[api/emergency-flow/generate] 🤖 Using Google Gemini to generate flow for keyword:', keyword);
 
-        const prompt = `建設機械の応急処置フローをJSON形式で生成してください。
+      const prompt = `建設機械の応急処置フローをJSON形式で生成してください。
 キーワード: ${keyword}
 
 以下の構造でJSONを生成してください。必ず5～6ステップ以上のフローにしてください:
@@ -811,26 +805,14 @@ export default async function emergencyFlowHandler(req, res) {
 4. decisionタイプ: 判断分岐ポイント（optionsで選択肢を提供）
 5. 最終ステップのnextStepは必ず "complete" にすること
 6. ${keyword}に応じた具体的で実践的な作業手順を含めること
-7. 建設機械の専門用語を使用すること`;
+7. 建設機械の専門用語を使用すること
+8. **必ずJSON形式のみで返答してください。説明文などは含めないでください。**`;
 
-        try {
-          const completion = await openai.chat.completions.create({
-            model: 'gpt-4o',
-            messages: [
-              {
-                role: 'system',
-                content: 'あなたは建設機械の保守・メンテナンスの専門家です。安全で実践的な応急処置フローを生成してください。'
-              },
-              {
-                role: 'user',
-                content: prompt
-              }
-            ],
-            response_format: { type: 'json_object' },
-            temperature: 0.7,
-          });
-
-          const gptResponse = completion.choices[0].message.content;
+      try {
+        const geminiResponse = await processGeminiRequest(
+          `あなたは建設機械の保守・メンテナンスの専門家です。安全で実践的な応急処置フローを生成してください。\n\n${prompt}`,
+          { temperature: 0.7, maxOutputTokens: 3000 }
+        );
           console.log('[api/emergency-flow/generate] ✅ GPT response received');
           
           const parsedFlow = JSON.parse(gptResponse);
@@ -849,30 +831,19 @@ export default async function emergencyFlowHandler(req, res) {
             description: parsedFlow.description || `キーワード「${keyword}」から自動生成された応急処置フロー`,
             triggerKeywords: parsedFlow.triggerKeywords || [keyword],
             steps: parsedFlow.steps || [],
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            generatedBy: 'GPT-4'
-          };
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          generatedBy: 'Google Gemini'
+        };
 
-          console.log('[api/emergency-flow/generate] ✅ Flow generated:', {
-            title: flowTemplate.title,
-            flowId: flowId,
-            steps: flowTemplate.steps.length
-          });
-        } catch (gptError) {
-          console.error('[api/emergency-flow/generate] ❌ GPT generation failed:', gptError.message);
-          // GPT失敗時はフォールバック
-          const tempFlowId = `flow_${timestamp}`;
-          flowTemplate = createFallbackTemplate(tempFlowId, keyword);
-          const sanitizedTitle = flowTemplate.title
-            .replace(/[<>:"/\\|?*]/g, '')
-            .replace(/\s+/g, '_')
-            .substring(0, 50);
-          const flowId = `${sanitizedTitle}_${timestamp}`;
-          flowTemplate.id = flowId;
-        }
-      } else {
-        console.warn('[api/emergency-flow/generate] ⚠️ OpenAI not available, using fallback template');
+        console.log('[api/emergency-flow/generate] ✅ Flow generated:', {
+          title: flowTemplate.title,
+          flowId: flowId,
+          steps: flowTemplate.steps.length
+        });
+      } catch (geminiError) {
+        console.error('[api/emergency-flow/generate] ❌ Gemini generation failed:', geminiError.message);
+        // Gemini失敗時はフォールバック
         const tempFlowId = `flow_${timestamp}`;
         flowTemplate = createFallbackTemplate(tempFlowId, keyword);
         const sanitizedTitle = flowTemplate.title
@@ -892,7 +863,6 @@ export default async function emergencyFlowHandler(req, res) {
       console.log('[api/emergency-flow/generate] 環境チェック:', {
         NODE_ENV: process.env.NODE_ENV,
         STORAGE_MODE: process.env.STORAGE_MODE,
-        hasStorageConnectionString: !!process.env.AZURE_STORAGE_CONNECTION_STRING,
         isAzureEnvironment: useAzure,
         flowId: flowTemplate.id,
         title: flowTemplate.title
@@ -934,10 +904,10 @@ export default async function emergencyFlowHandler(req, res) {
       
       if (!blobServiceClient) {
         console.error('[api/emergency-flow/generate] AZURE: ❌ BLOB service client not available');
-        console.error('[api/emergency-flow/generate] AZURE: AZURE_STORAGE_CONNECTION_STRINGを確認してください');
+        console.error('[api/emergency-flow/generate] Azure BLOB Storage is no longer supported, use STORAGE_MODE=gcs');
         return res.status(503).json({
           success: false,
-          error: 'BLOB storage not available (Azure環境)'
+          error: 'Azure BLOB Storage is no longer supported, use STORAGE_MODE=gcs'
         });
       }
       
@@ -1131,11 +1101,10 @@ export default async function emergencyFlowHandler(req, res) {
         });
       }
 
-      // Azureモード: BLOBで更新
-      console.log('[api/emergency-flow/PUT] AZURE: 🔍 BLOB更新診断開始');
-      console.log('[api/emergency-flow/PUT] AZURE: 環境変数:', {
-        AZURE_STORAGE_CONNECTION_STRING: process.env.AZURE_STORAGE_CONNECTION_STRING ? '設定済み' : '未設定',
-        BLOB_CONTAINER_NAME: process.env.BLOB_CONTAINER_NAME || 'デフォルト'
+      // GCSモード対応が必要な場合は lib/storage.mjs を使用
+      console.log('[api/emergency-flow/PUT] GCS: Storage mode:', {
+        STORAGE_MODE: process.env.STORAGE_MODE,
+        GCS_BUCKET: process.env.GOOGLE_CLOUD_STORAGE_BUCKET
       });
 
       const blobServiceClient = getBlobServiceClient();

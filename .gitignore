@@ -1,6 +1,15 @@
-# バックアティング�E・一時�Eキャティングーュ・不要データ
+# バックアップ・一時ファイル・キャッシュ・不要データ
 knowledge-base/backups/
 knowledge-base/temp/
+knowledge-base/chat-exports/json/*
+knowledge-base/chat-exports/images/*
+knowledge-base/troubleshooting/flows/*
+knowledge-base/troubleshooting/images/*
+knowledge-base/vectors/embeddings/*
+knowledge-base/vectors/indexes/*
+!knowledge-base/**/.gitkeep
+!knowledge-base/**/README.md
+knowledge-base-backup-*/
 logs-temp/
 cache/
 dist.zip
@@ -31,8 +40,21 @@ server/check-user-passwords.mjs
 
 # ローカル開発専用サーバー（本番では不要）
 server/unified-hot-reload-server.js
+# Google Cloud Service Account Keys (NEVER commit these!)
+# サービスアカウントキーは絶対にコミットしないこと
+*service-account*.json
+*sa-key*.json
+*gcp-key*.json
+emergency-*.json
+service-account*.json
+# BUT ALLOW specific config files
+!tsconfig*.json
+!package*.json
+!*.config.json
+!**/meta/*.json
+!function.json
+
 # Environment variables (Local・Docker use)
-# Exclude ALL .env files by default
 # Exclude ALL .env files by default
 
 # ALLOW only these specific files needed for deployment (MUST come before broad patterns)
@@ -42,13 +64,15 @@ server/unified-hot-reload-server.js
 !*.env.example              # ✅ Allow example env files
 !*.env.template             # ✅ Allow template env files
 
-# Now exclude all other .env files
+# Now exclude all other .env files (including development files with secrets)
 *.env
 *.env.*
 .env
 .env.local
-.env.development
+.env.development            # ⚠️ CRITICAL: Contains API keys and secrets
 .env.staging
+client/.env.development     # ⚠️ CRITICAL: Exclude client dev env
+server/.env.development     # ⚠️ CRITICAL: Exclude server dev env
 # Essential files - NEVER exclude
 # Package lock files (for reproducible builds)
 !package-lock.json
@@ -195,6 +219,10 @@ deploy-secrets.json
 .netlify
 # Heroku
 .heroku/
+# Google Cloud
+.gcloud/
+gcloud-credentials.json
+*-credentials.json
 # ========================================
 # Security and Secrets
 # ========================================
@@ -204,7 +232,11 @@ secrets.json
 *.pem
 *.p12
 *api-key*
-*secret*
+*sGoogle Cloud credentials
+*service-account*.json
+*gcp-*.json
+*google-credentials*.json
+# ecret*
 *token*
 # *.env.production - Allow for deployment configuration
 *.env.staging
@@ -218,12 +250,6 @@ vulnerability-scan.json
 # Backup files with potential secrets
 *.bak.env
 *backup*.env
-# OpenAI API Keys (any pattern that might leak)
-*openai*key*
-*OPENAI*KEY*
-# Prevent any files containing actual API key patterns
-sk-proj*
-sk-[a-zA-Z0-9]*
 # Other API keys
 *api*key*
 *API*KEY*
@@ -370,10 +396,16 @@ server/migrate-*.js
 server/trigger.js
 server/startup-migration.js
 
-# Development storage files
-server/uploads/*
-!server/uploads/.gitkeep
-
+# Development storage filess (consolidated)
+# サービスアカウントキーファイルは絶対にコミットしない
+*service-account*.json
+local-dev-sa.json
+gcp-sa-key
 # OneDrive sync files (Windows)
 ~$*
 *.tmp
+
+# Google Cloud Service Account Key
+*.json
+# または特定のファイル名
+local-dev-sa.json

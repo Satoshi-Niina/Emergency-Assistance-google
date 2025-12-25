@@ -3,7 +3,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { getBlobServiceClient, containerName, norm } from '../../infra/blob.mjs';
+// Azure Blobインポート削除済み
 import { isAzureEnvironment } from '../../config/env.mjs';
 
 export default async function imagesHandler(req, res) {
@@ -22,7 +22,7 @@ export default async function imagesHandler(req, res) {
   if (method === 'GET') {
     // パスから category と fileName を抽出
     // /api/images/chat-exports/xxx.jpg → category: chat-exports, fileName: xxx.jpg
-    // /api/images/emergency-flows/xxx.jpg → category: emergency-flows, fileName: xxx.jpg
+    // /api/images/troubleshooting/xxx.jpg → category: troubleshooting, fileName: xxx.jpg
     const pathParts = req.path.split('/').filter(Boolean);
     
     console.log('[api/images] DEBUG: Full path:', req.path);
@@ -43,7 +43,7 @@ export default async function imagesHandler(req, res) {
       });
     }
     
-    const category = pathParts[2]; // 'chat-exports' or 'emergency-flows'
+    const category = pathParts[2]; // 'chat-exports' or 'troubleshooting'
     const fileName = pathParts.slice(3).join('/'); // ファイル名（サブフォルダ対応）
     
     console.log(`[api/images] Fetching image: category=${category}, fileName=${fileName}`);
@@ -79,7 +79,6 @@ export default async function imagesHandler(req, res) {
       console.log('[api/images] Environment check:', {
         NODE_ENV: process.env.NODE_ENV,
         STORAGE_MODE: process.env.STORAGE_MODE,
-        hasStorageConnectionString: !!process.env.AZURE_STORAGE_CONNECTION_STRING,
         isAzureEnvironment: useAzure
       });
       
@@ -90,11 +89,11 @@ export default async function imagesHandler(req, res) {
         
         if (!blobServiceClient) {
           console.error('[api/images] AZURE: BLOB service client not available');
-          console.error('[api/images] Please check AZURE_STORAGE_CONNECTION_STRING environment variable');
+          console.error('[api/images] Azure BLOB Storage is no longer supported, use STORAGE_MODE=gcs');
           return res.status(503).json({
             success: false,
             error: 'ストレージサービスが利用できません（Azure環境）',
-            hint: 'AZURE_STORAGE_CONNECTION_STRING環境変数を確認してください'
+            hint: 'Azure BLOB Storage is no longer supported, use STORAGE_MODE=gcs'
           });
         }
         

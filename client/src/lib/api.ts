@@ -1,14 +1,13 @@
-// 統一APIクライアント - シンプル版（改善版）
+// 統一APIクライアント - シンプル版
 // ローカル開発・本番環境対応
 
 // 環境判定
 const isProduction = import.meta.env.PROD;
 const isDevelopment = import.meta.env.DEV;
 
-// APIベースURL決定（シンプル版）
-// 実行時に毎回評価して、window.runtimeConfigが確実に反映されるようにする
+// APIベースURL決定
 const getApiBaseUrl = (): string => {
-    // window.runtimeConfigが設定されている場合は最優先（index.htmlで設定される）
+    // window.runtimeConfigが設定されている場合は最優先
     if (typeof window !== 'undefined' && (window as any).runtimeConfig?.API_BASE_URL) {
         return (window as any).runtimeConfig.API_BASE_URL;
     }
@@ -22,41 +21,29 @@ const getApiBaseUrl = (): string => {
     return '';
 };
 
-// API URL構築（改善版 - パス重複を防止）
-// 実行時に毎回getApiBaseUrl()を呼び出して、最新の設定を取得
+// API URL構築
 export const buildApiUrl = (path: string): string => {
     // パスの正規化（先頭の/を確保）
     let cleanPath = path.startsWith('/') ? path : `/${path}`;
 
     // /api/ で始まっている場合は /api を除去
-    // /api/auth/login のような形式の場合、/api プレフィックスを除去
     if (cleanPath.startsWith('/api/')) {
-        cleanPath = cleanPath.substring(4); // '/api' を除去
+        cleanPath = cleanPath.substring(4);
     }
 
-    const apiBaseUrl = getApiBaseUrl(); // 実行時に毎回取得
+    const apiBaseUrl = getApiBaseUrl();
 
     if (apiBaseUrl) {
-        // 絶対URLが設定されている場合
-        const normalizedBaseUrl = apiBaseUrl.replace(/\/+$/, ''); // 末尾のスラッシュを除去
+        const normalizedBaseUrl = apiBaseUrl.replace(/\/+$/, '');
 
-        // ベースURLが既に /api で終わっているかチェック
         if (normalizedBaseUrl.endsWith('/api')) {
-            // ベースURLが /api で終わっている場合、そのままパスを追加
-            const finalUrl = `${normalizedBaseUrl}${cleanPath}`;
-            console.log(`🔗 API URL (base has /api): ${path} -> ${finalUrl}`);
-            return finalUrl;
+            return `${normalizedBaseUrl}${cleanPath}`;
         } else {
-            // /api を追加してパスを結合
-            const finalUrl = `${normalizedBaseUrl}/api${cleanPath}`;
-            console.log(`🔗 API URL (add /api): ${path} -> ${finalUrl}`);
-            return finalUrl;
+            return `${normalizedBaseUrl}/api${cleanPath}`;
         }
     } else {
         // 開発環境: 相対パス（Viteプロキシが /api を http://localhost:8080 に転送）
-        const finalUrl = `/api${cleanPath}`;
-        console.log(`🔗 API URL (relative, via Vite proxy): ${path} -> ${finalUrl}`);
-        return finalUrl;
+        return `/api${cleanPath}`;
     }
 };
 
@@ -84,27 +71,21 @@ export const apiRequest = async <T = any>(
         mode: 'cors',
     };
 
-    console.log(`🌐 API Request: ${options.method || 'GET'} ${url}`);
-
     try {
         const response = await fetch(url, config);
 
         if (!response.ok) {
             let errorMessage = `API Error ${response.status}: ${response.statusText}`;
             try {
-                // テキストとして読み取り、その後JSONパースを試みる
                 const errorText = await response.text();
                 try {
                     const errorData = JSON.parse(errorText);
-                    console.error(`❌ API Error Response:`, errorData);
                     errorMessage = errorData.error || errorData.message || errorMessage;
                 } catch {
-                    // JSONパースに失敗した場合はテキストをそのまま使用
-                    console.error(`❌ API Error: ${response.status} ${response.statusText} - ${errorText}`);
                     errorMessage = errorText || errorMessage;
                 }
-            } catch (err) {
-                console.error(`❌ Failed to read error response:`, err);
+            } catch {
+                // エラーレスポンスの読み取りに失敗
             }
 
             if (response.status === 401) {
@@ -116,21 +97,16 @@ export const apiRequest = async <T = any>(
         }
 
         const data = await response.json();
-        console.log(`✅ API Response: ${options.method || 'GET'} ${url}`, data);
 
-        // サーバーがsuccess: falseを返している場合でもHTTP 200の場合がある
+        // サーバーがsuccess: falseを返している場合
         if (data && typeof data === 'object' && 'success' in data && data.success === false) {
             const errorMessage = data.error || data.message || 'Unknown error';
-            console.error(`❌ API returned success: false:`, errorMessage);
             throw new Error(errorMessage);
         }
 
         return data;
     } catch (error) {
-        console.error(`❌ API Request Failed: ${options.method || 'GET'} ${url}`, error);
-
         // ネットワーク未解決等で失敗した場合のフォールバック（本番のみ）
-        // DNS未解決/TypeError: Failed to fetch 時に絶対URL→相対URLで再試行
         try {
             const base = getApiBaseUrl();
             if (base && error instanceof TypeError) {
@@ -139,18 +115,13 @@ export const apiRequest = async <T = any>(
                     cleanPath = cleanPath.substring(4);
                 }
                 const fallbackUrl = `/api${cleanPath}`;
-                console.warn(`⚠️ Fallback API retry: ${fallbackUrl} (original failed: ${url})`);
                 const retryResponse = await fetch(fallbackUrl, config);
                 if (retryResponse.ok) {
-                    const retryData = await retryResponse.json();
-                    console.log(`✅ Fallback API Response: ${options.method || 'GET'} ${fallbackUrl}`);
-                    return retryData;
-                } else {
-                    console.warn(`⚠️ Fallback API also failed: ${retryResponse.status} ${retryResponse.statusText}`);
+                    return await retryResponse.json();
                 }
             }
-        } catch (fallbackError) {
-            console.warn('⚠️ Fallback attempt threw error:', fallbackError);
+        } catch {
+            // フォールバックも失敗
         }
         throw error;
     }
@@ -172,7 +143,7 @@ export const api = {
     delete: <T = any>(path: string) => apiRequest<T>(path, { method: 'DELETE' }),
 };
 
-// 認証関連API（後方互換性のため）
+// 認証関連API
 export const authApi = {
     login: (credentials: { username: string; password: string }) =>
         api.post('/auth/login', credentials),
@@ -180,7 +151,7 @@ export const authApi = {
     me: () => api.get('/auth/me'),
 };
 
-// 完全な後方互換性のためのエイリアス
+// 後方互換性のためのエイリアス
 export const userApi = {
     get: <T = any>(path: string) => apiRequest<T>(path, { method: 'GET' }),
     post: <T = any>(path: string, data?: any) =>
@@ -207,7 +178,7 @@ export const auth = {
     logout: () => userApi.post('/auth/logout'),
     me: () => userApi.get('/auth/me'),
     getCurrentUser: () => userApi.get('/auth/me'),
-    handshake: () => Promise.resolve({ valid: true }), // 簡略化
+    handshake: () => Promise.resolve({ valid: true }),
 };
 
 export const storage = {
@@ -228,18 +199,5 @@ export const storage = {
 export const health = {
     check: () => api.get('/health').then(() => true).catch(() => false),
 };
-
-// 設定をログ出力（実行時に評価）
-setTimeout(() => {
-    console.log('🔧 Simple API Client:', {
-        isDevelopment,
-        isProduction,
-        API_BASE_URL: getApiBaseUrl(),
-        runtimeConfig: typeof window !== 'undefined' ? (window as any).runtimeConfig : undefined,
-        VITE_API_BASE_URL: import.meta.env.VITE_API_BASE_URL,
-        exampleUrl: buildApiUrl('/health'),
-        loginUrl: buildApiUrl('/auth/login')
-    });
-}, 100); // window.runtimeConfigが設定されるまで少し待つ
 
 export default api;

@@ -4,7 +4,7 @@ export type User = {
   id: string;
   username: string;
   displayName: string;
-  role: 'employee' | 'admin';
+  role: 'employee' | 'operator' | 'admin';
   department?: string;
 };
 

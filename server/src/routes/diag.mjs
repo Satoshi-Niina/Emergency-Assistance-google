@@ -2,8 +2,7 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { VERSION, AZURE_STORAGE_CONNECTION_STRING, AZURE_STORAGE_CONTAINER_NAME, BLOB_PREFIX } from '../config/env.mjs';
-import { getBlobServiceClient, containerName } from '../infra/blob.mjs';
+import { VERSION } from '../config/env.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,7 +14,7 @@ const router = express.Router();
 router.get('/env', (req, res) => {
   const safeEnv = {};
   const unsafeKeys = ['KEY', 'SECRET', 'PASSWORD', 'TOKEN', 'CONN', 'CREDENTIAL'];
-  
+
   Object.keys(process.env).forEach(key => {
     if (unsafeKeys.some(unsafe => key.toUpperCase().includes(unsafe))) {
       safeEnv[key] = process.env[key] ? '[REDACTED]' : '[NOT SET]';
@@ -23,7 +22,7 @@ router.get('/env', (req, res) => {
       safeEnv[key] = process.env[key];
     }
   });
-  
+
   res.json({
     env: safeEnv,
     cwd: process.cwd(),
@@ -31,8 +30,8 @@ router.get('/env', (req, res) => {
     timestamp: new Date().toISOString(),
     // 重要な環境変数の確認
     criticalEnvVars: {
-      OPENAI_API_KEY: process.env.OPENAI_API_KEY ? '✅ SET' : '❌ NOT SET',
-      AZURE_STORAGE_CONNECTION_STRING: process.env.AZURE_STORAGE_CONNECTION_STRING ? '✅ SET' : '❌ NOT SET',
+      GOOGLE_GEMINI_API_KEY: process.env.GOOGLE_GEMINI_API_KEY ? '✅ SET' : '❌ NOT SET',
+      STORAGE_MODE: process.env.STORAGE_MODE || 'local',
       DATABASE_URL: process.env.DATABASE_URL ? '✅ SET' : '❌ NOT SET',
       NODE_ENV: process.env.NODE_ENV || 'not set',
       PORT: process.env.PORT || 'not set'
@@ -40,198 +39,89 @@ router.get('/env', (req, res) => {
   });
 });
 
-// Blob test
-router.get('/blob-test', async (req, res) => {
+// Azure Blob Storage関連エンドポイントは削除済み（GCS専用システム）
+// 以下のエンドポイントは無効化されました：
+// - GET /blob-test (Azure Blob接続テスト)
+// - GET /blob-detailed (Azure Blob詳細診断)
+// 
+// GCS接続テストは server/test-gcs-connection.mjs を使用してください
+
+// Gemini API接続診断
+router.get('/gemini-check', async (req, res) => {
   try {
-    const blobServiceClient = getBlobServiceClient();
-    if (!blobServiceClient) {
-      return res.status(503).json({ error: 'Blob service client not initialized' });
+    const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
+
+    if (!apiKey) {
+      return res.status(500).json({
+        success: false,
+        status: 'error',
+        message: 'GOOGLE_GEMINI_API_KEY is not set',
+        details: {
+          apiKeySet: false,
+          error: 'Environment variable not configured'
+        }
+      });
     }
-    
-    const containerClient = blobServiceClient.getContainerClient(containerName);
-    const exists = await containerClient.exists();
-    
-    res.json({
-      status: 'ok',
-      container: containerName,
-      exists: exists,
-      accountName: blobServiceClient.accountName,
-      timestamp: new Date().toISOString()
+
+    // Gemini APIに簡単なテストリクエストを送信
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(apiKey);
+    // デフォルトモデルをgemini-2.0-flash-expに変更（テスト済み動作確認済み）
+    const modelName = process.env.GEMINI_MODEL || 'gemini-2.0-flash-exp';
+    console.log('----------------------------------------------------');
+    console.log(`[VERIFY-TIME: 18:07] Gemini Check executing model: ${modelName}`);
+    console.log('----------------------------------------------------');
+    const model = genAI.getGenerativeModel({ model: modelName });
+
+    const testPrompt = 'これはテストです。「OK」とだけ返答してください。';
+    const result = await model.generateContent(testPrompt);
+    const response = await result.response;
+    const text = response.text();
+
+    return res.json({
+      success: true,
+      status: 'connected',
+      message: 'Gemini API connection successful',
+      details: {
+        apiKeySet: true,
+        model: modelName,
+        testResponse: text,
+        timestamp: new Date().toISOString()
+      }
     });
+
   } catch (error) {
-    res.status(500).json({
+    console.error('[Gemini Check] Error:', error);
+    return res.status(500).json({
+      success: false,
       status: 'error',
-      message: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      message: 'Gemini API connection failed',
+      details: {
+        apiKeySet: !!process.env.GOOGLE_GEMINI_API_KEY,
+        error: error.message,
+        errorType: error.constructor.name
+      }
     });
   }
 });
 
-// 詳細BLOB診断 (画像アップロード問題用)
-router.get('/blob-detailed', async (req, res) => {
-  const diagnostics = {
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV,
-    config: {
-      containerName: containerName,
-      connectionStringSet: !!AZURE_STORAGE_CONNECTION_STRING,
-      containerNameFromEnv: AZURE_STORAGE_CONTAINER_NAME,
-      BLOB_PREFIX: BLOB_PREFIX || '(empty string)'
-    },
-    tests: {}
-  };
-
-  try {
-    // Test 1: Client initialization
-    const blobServiceClient = getBlobServiceClient();
-    diagnostics.tests.clientInit = blobServiceClient ? '✅ Success' : '❌ Failed';
-    
-    if (!blobServiceClient) {
-      diagnostics.error = 'BLOB client could not be initialized';
-      return res.status(503).json(diagnostics);
-    }
-
-    diagnostics.config.accountName = blobServiceClient.accountName;
-
-    // Test 2: Container existence
-    const containerClient = blobServiceClient.getContainerClient(containerName);
-    const containerExists = await containerClient.exists();
-    diagnostics.tests.containerExists = containerExists ? '✅ Exists' : '❌ Not Found';
-
-    if (!containerExists) {
-      diagnostics.error = `Container '${containerName}' does not exist`;
-      diagnostics.solution = 'Create container in Azure Portal or run: az storage container create';
-      return res.status(404).json(diagnostics);
-    }
-
-    // Test 3: Container properties
-    const containerProps = await containerClient.getProperties();
-    diagnostics.tests.containerProps = '✅ Retrieved';
-    diagnostics.container = {
-      publicAccess: containerProps.publicAccess || 'none',
-      lastModified: containerProps.lastModified?.toISOString(),
-      etag: containerProps.etag
-    };
-
-    // Test 4: Write permission test
-    try {
-      const testBlobName = `knowledge-base/test/diag-test-${Date.now()}.txt`;
-      const testBlockBlobClient = containerClient.getBlockBlobClient(testBlobName);
-      await testBlockBlobClient.upload('test', 4);
-      diagnostics.tests.writePermission = '✅ Can Write';
-      // Clean up test file
-      await testBlockBlobClient.delete();
-    } catch (writeError) {
-      diagnostics.tests.writePermission = '❌ Cannot Write';
-      diagnostics.writeError = {
-        message: writeError.message,
-        code: writeError.code,
-        statusCode: writeError.statusCode
-      };
-    }
-
-    // Test 5: List blobs (sample images)
-    let imageBlobCount = 0;
-    const sampleImageBlobs = [];
-    for await (const blob of containerClient.listBlobsFlat({ prefix: 'knowledge-base/images/chat-exports/' })) {
-      if (imageBlobCount < 5) {
-        sampleImageBlobs.push({
-          name: blob.name,
-          size: blob.properties.contentLength,
-          contentType: blob.properties.contentType,
-          lastModified: blob.properties.lastModified?.toISOString()
-        });
-      }
-      imageBlobCount++;
-    }
-    diagnostics.tests.listImages = `✅ Found ${imageBlobCount} chat-export image blobs`;
-    diagnostics.sampleImageBlobs = sampleImageBlobs;
-
-    // Test 6: List troubleshooting flows
-    let flowBlobCount = 0;
-    const sampleFlowBlobs = [];
-    for await (const blob of containerClient.listBlobsFlat({ prefix: 'knowledge-base/troubleshooting/' })) {
-      if (flowBlobCount < 5) {
-        sampleFlowBlobs.push({
-          name: blob.name,
-          size: blob.properties.contentLength,
-          lastModified: blob.properties.lastModified?.toISOString()
-        });
-      }
-      flowBlobCount++;
-    }
-    diagnostics.tests.listFlows = `✅ Found ${flowBlobCount} troubleshooting flow blobs`;
-    diagnostics.sampleFlowBlobs = sampleFlowBlobs;
-
-    // Test 7: Image read test (if any images exist)
-    if (imageBlobCount > 0 && sampleImageBlobs[0]) {
-      try {
-        const imageBlobName = sampleImageBlobs[0].name;
-        const imageBlobClient = containerClient.getBlobClient(imageBlobName);
-        const imageExists = await imageBlobClient.exists();
-        diagnostics.tests.imageReadTest = imageExists ? '✅ Can read image blob' : '❌ Cannot read image blob';
-        diagnostics.imageTestBlob = imageBlobName;
-      } catch (imageError) {
-        diagnostics.tests.imageReadTest = '❌ Image read failed';
-        diagnostics.imageReadError = imageError.message;
-      }
-    } else {
-      diagnostics.tests.imageReadTest = '⚠️ No images to test';
-    }
-
-    // Test 5: Upload test
-    // norm()を使用してBLOB_PREFIXを自動適用（knowledge-base/は重複するので除外）
-    const testBlobName = norm(`images/chat-exports/_test_${Date.now()}.txt`);
-    const testContent = 'Upload test - ' + new Date().toISOString();
-    const testBlockBlobClient = containerClient.getBlockBlobClient(testBlobName);
-    
-    await testBlockBlobClient.upload(testContent, testContent.length, {
-      blobHTTPHeaders: { blobContentType: 'text/plain' }
-    });
-    
-    const uploadExists = await testBlockBlobClient.exists();
-    diagnostics.tests.uploadTest = uploadExists ? '✅ Upload successful' : '❌ Upload failed';
-    
-    if (uploadExists) {
-      diagnostics.testBlobUrl = testBlockBlobClient.url;
-      // クリーンアップ
-      await testBlockBlobClient.delete();
-      diagnostics.tests.cleanup = '✅ Test blob deleted';
-    }
-
-    // Final status
-    diagnostics.status = 'healthy';
-    diagnostics.message = 'All BLOB storage tests passed successfully';
-
-    res.json(diagnostics);
-
-  } catch (error) {
-    diagnostics.status = 'error';
-    diagnostics.error = error.message;
-    diagnostics.errorCode = error.code;
-    diagnostics.errorDetails = {
-      name: error.name,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    };
-
-    res.status(500).json(diagnostics);
-  }
-});
+// Azure Blob Storage関連エンドポイントは削除済み（GCS専用システム）
+// GCS接続テストは server/test-gcs-connection.mjs を使用してください
 
 export default function registerDiagRoutes(app) {
   app.use('/api/_diag', router);
-  
+
   // System check endpoints (redirect to actual API endpoints)
   app.get('/api/system-check/db-check', async (req, res, next) => {
     req.url = '/api/db-check';
     return app._router.handle(req, res, next);
   });
-  
+
   app.post('/api/system-check/gpt-check', async (req, res, next) => {
     req.url = '/api/gpt-check';
     return app._router.handle(req, res, next);
   });
-  
+
   // Version info
   app.get('/api/version', (req, res) => {
     let deploymentInfo = {};

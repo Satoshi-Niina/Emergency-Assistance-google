@@ -2036,7 +2036,7 @@ export default function ChatPage() {
     try {
       // 統一API設定を使用
       const { buildApiUrl } = await import('../lib/api');
-      const apiUrl = buildApiUrl('/chatgpt');
+      const apiUrl = buildApiUrl('/gemini-chat');
 
       // 会話履歴から経過時間を計算
       const startTime = conversationHistory.find(msg =>

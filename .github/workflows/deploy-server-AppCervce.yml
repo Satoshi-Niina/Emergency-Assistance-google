@@ -541,7 +541,6 @@ jobs:
               AZURE_STORAGE_ACCOUNT_NAME="${{ secrets.AZURE_STORAGE_ACCOUNT_NAME }}" \
               FRONTEND_URL="https://happy-bush-083160b00.3.azurestaticapps.net" \
               STATIC_WEB_APP_URL="https://happy-bush-083160b00.3.azurestaticapps.net" \
-              OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" \
               AUTO_INGEST_CHAT_EXPORTS=true \
               BLOB_PREFIX="knowledge-base/" \
               SCM_DO_BUILD_DURING_DEPLOYMENT=false \

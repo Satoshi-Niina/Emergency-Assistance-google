@@ -16,7 +16,7 @@ export default defineConfig({
                 secure: false,
                 configure: (proxy, options) => {
                     proxy.on('proxyReq', (proxyReq, req, res) => {
-                        console.log('Proxying request:', req.method, req.url, '-> http://localhost:3000');
+                        console.log('Proxying request:', req.method, req.url, '-> http://localhost:8080');
                     });
                     proxy.on('error', (err, req, res) => {
                         console.error('Proxy error:', err);

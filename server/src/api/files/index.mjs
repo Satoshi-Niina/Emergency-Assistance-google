@@ -1,6 +1,6 @@
 import { upload } from '../../infra/blob.mjs';
-import { isAzureEnvironment } from '../../config/env.mjs';
-import { getBlobServiceClient, norm, containerName } from '../../infra/blob.mjs';
+import { uploadFile, isGCSStorage } from '../../lib/storage.mjs';
+// GCS専用ストレージシステム（Azure削除済み）
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -54,19 +54,21 @@ export default async function (req, res) {
 
       const uploadedFile = req.file;
       const saveOriginalFile = req.body.saveOriginalFile === 'true';
+      const machineTag = req.body.machineTag || '';
 
       console.log('[api/files/import] File upload:', {
         fileName: uploadedFile?.originalname,
         fileSize: uploadedFile?.size,
         mimetype: uploadedFile?.mimetype,
-        saveOriginalFile
+        saveOriginalFile,
+        machineTag
       });
 
-      const useAzure = isAzureEnvironment();
+      const useGCS = isGCSStorage();
       console.log('[api/files/import] Environment:', {
-        useAzure,
+        useGCS,
         STORAGE_MODE: process.env.STORAGE_MODE,
-        NODE_ENV: process.env.NODE_ENV
+        GCS_BUCKET: process.env.GOOGLE_CLOUD_STORAGE_BUCKET
       });
 
       // 保存先を決定
@@ -81,79 +83,48 @@ export default async function (req, res) {
         .replace(/\.+/g, '.')  // 連続するドットを1つに
         .trim();
       
-      const safeFileName = `${timestamp}_${sanitizedFileName}`;
+      // 機種タグがある場合はファイル名に付与
+      const machinePrefix = machineTag ? `[${machineTag}]_` : '';
+      const safeFileName = `${timestamp}_${machinePrefix}${sanitizedFileName}`;
 
-      if (useAzure) {
-        // Azure Blob Storage に保存
-        console.log('[api/files/import] Saving to Azure Blob Storage');
+      try {
+        let filePath = null;
 
-        try {
-          const blobServiceClient = getBlobServiceClient();
-          if (!blobServiceClient) {
-            console.error('[api/files/import] ❌ Failed to initialize Blob Service Client');
-            return res.status(503).json({
-              success: false,
-              error: 'Storage service unavailable (Configuration Error)',
-              message: 'ストレージサービスへの接続に失敗しました。管理者に連絡してください。',
-              code: 'BLOB_CLIENT_INIT_FAILED'
-            });
-          }
+        // saveOriginalFileがtrueの場合のみ元ファイルを保存
+        if (saveOriginalFile) {
+          // 全てmanualsフォルダに保存（機種タグはファイル名に含まれる）
+          filePath = `manuals/${safeFileName}`;
 
-          const containerClient = blobServiceClient.getContainerClient(containerName);
-          let blobPath = null;
+          console.log('[api/files/import] Uploading to storage:', {
+            storageMode: useGCS ? 'GCS' : 'Local',
+            filePath,
+            fileSize: uploadedFile.size
+          });
 
-          // saveOriginalFileがtrueの場合のみ元ファイルを保存
-          if (saveOriginalFile) {
-            blobPath = `knowledge-base/imports/${safeFileName}`;
-            const blockBlobClient = containerClient.getBlockBlobClient(blobPath);
+          await uploadFile(uploadedFile.buffer, filePath, uploadedFile.mimetype);
+          console.log('[api/files/import] ✅ File uploaded:', filePath);
+        } else {
+          console.log('[api/files/import] ⚠️ Skipping original file save (saveOriginalFile=false)');
+        }
 
-            console.log('[api/files/import] Uploading to blob:', {
-              container: containerName,
-              blobPath,
-              fileSize: uploadedFile.size
-            });
-
-            // コンテナの存在確認と作成
-            const containerExists = await containerClient.exists();
-            if (!containerExists) {
-              console.log('[api/files/import] Creating container:', containerName);
-              await containerClient.create();
-            }
-
-            await blockBlobClient.upload(uploadedFile.buffer, uploadedFile.size, {
-              blobHTTPHeaders: {
-                blobContentType: uploadedFile.mimetype
-              }
-            });
-
-            console.log('[api/files/import] ✅ File uploaded to Blob:', blobPath);
-          } else {
-            console.log('[api/files/import] ⚠️ Skipping original file save (saveOriginalFile=false)');
-          }
-
-          // 自動処理トリガー: DataProcessorを呼び出す
-          // NOTE: 本来はAzure FunctionsのBlob TriggerやQueueを使うべきだが、
-          // 簡易実装としてここで直接関数呼び出しか、HTTPリクエストを行う。
-          // ここではimportして直接ロジックを呼ぶのは循環依存のリスクがあるため、
-          // 非同期で処理を開始したログだけ残し、クライアント側で処理用エンドポイントを叩くか、
-          // あるいはここで内部的に処理用の関数を呼ぶ設計にするのが良い。
-          // 今回は「確認して？」とのことなので、確実に動くように、内部でfetchを使って自分自身のDataProcessorを叩くか、
-          // または動的にインポートして実行する。
-
-          // 自動処理トリガー（非同期）
+        // 自動処理トリガー: DataProcessorを呼び出す
+        const isLocalDev = process.env.LOCAL_DEV === 'true';
+        
+        if (isLocalDev) {
           setImmediate(async () => {
             try {
-              console.log('[api/files/import] 🔄 バックグラウンド処理開始:', fileName);
+              console.log('[api/files/import] 🔄 ai-context処理開始:', fileName);
               const module = await import('../data-processor/index.mjs');
               
               const mockReq = {
                 method: 'POST',
                 path: '/api/data-processor/process',
                 body: {
-                  filePath: blobPath,
+                  filePath: filePath,
                   fileBuffer: saveOriginalFile ? null : uploadedFile.buffer,
                   fileType: uploadedFile.mimetype,
-                  fileName: fileName
+                  fileName: fileName,
+                  machineTag: machineTag
                 }
               };
               
@@ -162,9 +133,9 @@ export default async function (req, res) {
                 status: (code) => ({
                   json: (data) => {
                     if (code === 200) {
-                      console.log('[api/files/import] ✅ 処理完了:', fileName);
+                      console.log('[api/files/import] ✅ ai-context処理完了:', fileName);
                     } else {
-                      console.error('[api/files/import] ❌ 処理失敗:', code, data);
+                      console.error('[api/files/import] ❌ ai-context処理失敗:', code, data);
                     }
                   },
                   send: () => {}
@@ -174,108 +145,38 @@ export default async function (req, res) {
 
               await module.default(mockReq, mockRes);
             } catch (err) {
-              console.error('[api/files/import] ❌ バックグラウンド処理エラー:', err);
+              console.error('[api/files/import] ❌ ai-context処理エラー:', err);
             }
           });
-
-          return res.status(200).json({
-            success: true,
-            message: 'ファイルのインポートが完了しました（バックグラウンド処理開始）',
-            importedFiles: [{
-              id: `blob-${timestamp}`,
-              name: fileName,
-              path: blobPath,
-              size: uploadedFile.size,
-              type: uploadedFile.mimetype,
-              importedAt: new Date().toISOString(),
-              storage: 'blob'
-            }],
-            totalFiles: 1,
-            processedFiles: 1,
-            errors: []
-          });
-        } catch (error) {
-          console.error('[api/files/import] Blob upload error:', error);
-          throw error;
+        } else {
+          console.log('[api/files/import] ⏭️  本番環境: ai-context処理スキップ（元ファイルから直接読み込み）');
         }
-      } else {
-        // ローカルファイルシステムに保存
-        console.log('[api/files/import] Saving to local filesystem');
 
-        try {
-          let localPath = null;
+        console.log('[api/files/import] ✅ ファイル保存完了' + (machineTag ? '（機種: ' + machineTag + '）' : '') + ':', filePath);
 
-          // saveOriginalFileがtrueの場合のみ元ファイルを保存
-          if (saveOriginalFile) {
-            const uploadsDir = path.join(process.cwd(), 'knowledge-base', 'imports');
-            await fs.mkdir(uploadsDir, { recursive: true });
-
-            localPath = path.join(uploadsDir, safeFileName);
-            await fs.writeFile(localPath, uploadedFile.buffer);
-
-            console.log('[api/files/import] ✅ File saved locally:', localPath);
-          } else {
-            console.log('[api/files/import] ⚠️ Skipping original file save (saveOriginalFile=false)');
-          }
-
-          // 自動処理トリガー（非同期）
-          setImmediate(async () => {
-            try {
-              console.log('[api/files/import] 🔄 バックグラウンド処理開始:', fileName);
-              const module = await import('../data-processor/index.mjs');
-              
-              const mockReq = {
-                method: 'POST',
-                path: '/api/data-processor/process',
-                body: {
-                  filePath: localPath,
-                  fileBuffer: saveOriginalFile ? null : uploadedFile.buffer,
-                  fileType: uploadedFile.mimetype,
-                  fileName: fileName
-                }
-              };
-              
-              const mockRes = {
-                set: () => {},
-                status: (code) => ({
-                  json: (data) => {
-                    if (code === 200) {
-                      console.log('[api/files/import] ✅ 処理完了:', fileName);
-                    } else {
-                      console.error('[api/files/import] ❌ 処理失敗:', code, data);
-                    }
-                  },
-                  send: () => {}
-                }),
-                json: (data) => console.log('[api/files/import] 処理結果:', data)
-              };
-
-              await module.default(mockReq, mockRes);
-            } catch (err) {
-              console.error('[api/files/import] ❌ バックグラウンド処理エラー:', err);
-            }
-          });
-
-          return res.status(200).json({
-            success: true,
-            message: 'ファイルのインポートが完了しました（ローカルストレージ）',
-            importedFiles: [{
-              id: `local-${timestamp}`,
-              name: fileName,
-              path: localPath,
-              size: uploadedFile.size,
-              type: uploadedFile.mimetype,
-              importedAt: new Date().toISOString(),
-              storage: 'local'
-            }],
-            totalFiles: 1,
-            processedFiles: 1,
-            errors: []
-          });
-        } catch (error) {
-          console.error('[api/files/import] Local save error:', error);
-          throw error;
-        }
+        return res.status(200).json({
+          success: true,
+          message: 'ファイルのインポートが完了しました（バックグラウンド処理開始）',
+          importedFiles: [{
+            id: `file-${timestamp}`,
+            name: fileName,
+            path: filePath,
+            size: uploadedFile.size,
+            type: uploadedFile.mimetype,
+            importedAt: new Date().toISOString(),
+            storage: useGCS ? 'gcs' : 'local'
+          }],
+          totalFiles: 1,
+          processedFiles: 1,
+          errors: []
+        });
+      } catch (error) {
+        console.error('[api/files/import] Upload error:', error);
+        return res.status(500).json({
+          success: false,
+          error: 'File upload failed',
+          message: error.message
+        });
       }
     }
 

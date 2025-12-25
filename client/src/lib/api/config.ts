@@ -149,10 +149,24 @@ export const KNOWLEDGE_API = {
     `/knowledge-base/images/${category}/${filename}`,
 };
 
-// チャットAPIエンドポイント（統一APIクライアント使用）
+// チャットAPIエンドポイント(統一APIクライアント使用)
+// Google Gemini APIを使用
 export const CHAT_API = {
-  CHATGPT: '/chatgpt',
+  GEMINI_CHAT: '/gemini-chat',
+  CHAT_EXPORT: '/chat-export',
   HEALTH: '/healthz',
+};
+
+// AI関連APIエンドポイント
+export const AI_API = {
+  FLOW_GENERATOR: '/flow-generator',
+  AI_SETTINGS: '/ai-settings',
+};
+
+// ストレージ関連APIエンドポイント
+export const STORAGE_API = {
+  STATUS: '/storage-status',
+  TEST: '/storage-test',
 };
 
 // 設定情報

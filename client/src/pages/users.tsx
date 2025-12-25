@@ -57,7 +57,7 @@ interface UserData {
   id: string;
   username: string;
   display_name: string;
-  role: 'employee' | 'admin';
+  role: 'employee' | 'operator' | 'admin';
   department?: string;
   description?: string;
 }
@@ -67,7 +67,7 @@ interface NewUserData {
   username: string;
   password: string;
   display_name: string;
-  role: 'employee' | 'admin';
+  role: 'employee' | 'operator' | 'admin';
   department?: string;
   description?: string;
 }
@@ -729,12 +729,6 @@ export default function UsersPage() {
         </div>
 
         <div className='flex space-x-2'>
-          <Link to='/settings'>
-            <Button variant='outline' size='sm'>
-              <ArrowLeft className='mr-2 h-4 w-4' />
-              設定に戻る
-            </Button>
-          </Link>
           <Dialog open={showImportDialog} onOpenChange={setShowImportDialog}>
             <DialogTrigger asChild>
               <Button variant='outline'>
@@ -829,7 +823,8 @@ export default function UsersPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value='employee'>一般ユーザー</SelectItem>
-                        <SelectItem value='admin'>管理者</SelectItem>
+                        <SelectItem value='operator'>運用管理</SelectItem>
+                        <SelectItem value='admin'>システム管理者</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -848,6 +843,12 @@ export default function UsersPage() {
               </form>
             </DialogContent>
           </Dialog>
+          <Link to='/settings'>
+            <Button variant='outline' size='sm'>
+              <ArrowLeft className='mr-2 h-4 w-4' />
+              設定に戻る
+            </Button>
+          </Link>
         </div>
       </div>
 
@@ -908,12 +909,15 @@ export default function UsersPage() {
                         <TableCell>{user.display_name}</TableCell>
                         <TableCell>
                           <span
-                            className={`px-2 py-1 rounded-full text-xs ${user.role === 'admin'
-                              ? 'bg-amber-100 text-amber-800'
-                              : 'bg-blue-100 text-blue-800'
-                              }`}
+                            className={`px-2 py-1 rounded-full text-xs ${
+                              user.role === 'admin'
+                                ? 'bg-red-100 text-red-800'
+                                : user.role === 'operator'
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-blue-100 text-blue-800'
+                            }`}
                           >
-                            {user.role === 'admin' ? '管理者' : '一般ユーザー'}
+                            {user.role === 'admin' ? 'システム管理者' : user.role === 'operator' ? '運用管理' : '一般ユーザー'}
                           </span>
                         </TableCell>
                         <TableCell>{user.department || '-'}</TableCell>
@@ -1044,7 +1048,8 @@ export default function UsersPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value='employee'>一般ユーザー</SelectItem>
-                    <SelectItem value='admin'>管理者</SelectItem>
+                    <SelectItem value='operator'>運用管理</SelectItem>
+                    <SelectItem value='admin'>システム管理者</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

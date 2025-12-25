@@ -406,9 +406,15 @@ export default function SettingsPage() {
                   </p>
                 </div>
                 <div
-                  className={`text-white text-xs px-3 py-1 rounded-full ${user?.role === 'admin' ? 'bg-gradient-to-r from-purple-500 to-indigo-500' : 'bg-gradient-to-r from-blue-500 to-green-500'}`}
+                  className={`text-white text-xs px-3 py-1 rounded-full ${
+                    user?.role === 'admin' 
+                      ? 'bg-gradient-to-r from-red-500 to-purple-500' 
+                      : user?.role === 'operator'
+                      ? 'bg-gradient-to-r from-amber-500 to-orange-500'
+                      : 'bg-gradient-to-r from-blue-500 to-green-500'
+                  }`}
                 >
-                  {user?.role === 'admin' ? '管理者' : '一般ユーザー'}
+                  {user?.role === 'admin' ? 'システム管理者' : user?.role === 'operator' ? '運用管理' : '一般ユーザー'}
                 </div>
               </div>
 

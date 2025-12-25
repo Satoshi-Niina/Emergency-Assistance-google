@@ -5,11 +5,13 @@ import { useAuth } from '../../context/auth-context';
 interface ProtectedRouteProps {
   children: ReactNode;
   requireAdmin?: boolean;
+  requireOperator?: boolean;
 }
 
 export function ProtectedRoute({
   children,
   requireAdmin = false,
+  requireOperator = false,
 }: ProtectedRouteProps) {
   const { user, isLoading } = useAuth();
   const location = useLocation();
@@ -20,6 +22,7 @@ export function ProtectedRoute({
     username: user?.username,
     role: user?.role,
     requireAdmin,
+    requireOperator,
     currentPath: location.pathname,
     timestamp: new Date().toISOString(),
   });
@@ -44,9 +47,14 @@ export function ProtectedRoute({
   }
 
   // 管理者権限が必要で、管理者でない場合
-  // employee（一般ユーザー）は管理者権限を持たない
   if (requireAdmin && user.role !== 'admin') {
     console.log('🚫 ProtectedRoute - 管理者権限が必要ですが、権限がありません');
+    return <Navigate to='/chat' replace />;
+  }
+
+  // 運用管理者以上の権限が必要で、権限がない場合
+  if (requireOperator && user.role !== 'admin' && user.role !== 'operator') {
+    console.log('🚫 ProtectedRoute - 運用管理者以上の権限が必要ですが、権限がありません');
     return <Navigate to='/chat' replace />;
   }
 

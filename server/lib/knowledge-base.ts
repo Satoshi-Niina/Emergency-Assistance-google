@@ -37,9 +37,11 @@ if (process.env.KNOWLEDGE_BASE_PATH) {
 }
 const DATA_DIR = path.join(KNOWLEDGE_BASE_DIR, 'data');
 const TEXT_DIR = path.join(KNOWLEDGE_BASE_DIR, 'text');
-const TROUBLESHOOTING_DIR = path.join(KNOWLEDGE_BASE_DIR, 'troubleshooting');
+// 新構造: troubleshooting/flows/
+const TROUBLESHOOTING_DIR = path.join(KNOWLEDGE_BASE_DIR, 'troubleshooting', 'flows');
 const BACKUP_DIR = path.join(KNOWLEDGE_BASE_DIR, 'backups');
-const DOCUMENTS_DIR = path.join(KNOWLEDGE_BASE_DIR, 'documents');
+// 新構造: ai-training/manuals/
+const DOCUMENTS_DIR = path.join(KNOWLEDGE_BASE_DIR, 'ai-training', 'manuals');
 const QA_DIR = path.join(KNOWLEDGE_BASE_DIR, 'qa');
 const JSON_DIR = path.join(KNOWLEDGE_BASE_DIR, 'json');
 const PPT_DIR = path.join(KNOWLEDGE_BASE_DIR, 'ppt');

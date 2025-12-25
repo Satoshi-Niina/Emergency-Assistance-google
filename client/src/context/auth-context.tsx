@@ -15,7 +15,7 @@ interface User {
   id: string;
   username: string;
   displayName: string;
-  role: 'admin' | 'employee';
+  role: 'admin' | 'operator' | 'user';
   department?: string;
 }
 
@@ -30,12 +30,21 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const normalizeRole = (role?: string | null): User['role'] => {
-  if (!role) return 'employee';
+  if (!role) return 'user';
   const normalized = role.toString().trim().toLowerCase();
-  if (normalized === 'admin') return 'admin';
-  if (normalized === 'employee') return 'employee';
-  if (normalized === 'user') return 'employee';
-  return 'employee';
+  
+  // システム管理者
+  if (normalized === 'admin' || normalized === 'administrator' || normalized === 'システム管理者') {
+    return 'admin';
+  }
+  
+  // 運用管理者
+  if (normalized === 'operator' || normalized === '運用管理者') {
+    return 'operator';
+  }
+  
+  // 一般ユーザー
+  return 'user';
 };
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -56,7 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           id: 'demo',
           username: 'demo',
           displayName: 'Demo User',
-          role: normalizeRole('employee')
+          role: normalizeRole('user')
         });
         setIsLoading(false);
         setAuthChecked(true);
@@ -125,7 +134,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         id: 'demo',
         username: username,
         displayName: username,
-        role: normalizeRole('employee')
+        role: normalizeRole('user')
       });
       return;
     }

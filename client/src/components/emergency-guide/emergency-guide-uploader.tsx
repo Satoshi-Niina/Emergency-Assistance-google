@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { useToast } from '../../hooks/use-toast.ts';
+import { useToast } from '../../hooks/use-toast';
 import {
   Card,
   CardContent,
@@ -36,7 +36,7 @@ const EmergencyGuideUploader: React.FC<EmergencyGuideUploaderProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadSuccess, setUploadSuccess] = useState(false);
-  const [saveOriginalFile, setSaveOriginalFile] = useState(false);
+  const [saveOriginalFile, setSaveOriginalFile] = useState(false); // デフォルトで保存しない（コスト最適化）
   // 自動フロー生成は常に有効
   const autoGenerateFlow = true;
 
@@ -64,26 +64,26 @@ const EmergencyGuideUploader: React.FC<EmergencyGuideUploaderProps> = ({
         description: `キーワード「${keywordsInput}」からフローを生成しています...`,
       });
 
-      // まず統合サーバーのChatGPT APIを使用してフロー生成を試行
+      // Google API機能のみを使用するため、ChatGPT APIは削除されました
+      // 基本的なフロー生成を使用します
       let response;
       try {
         response = await fetch(
-          buildApiUrl('/chatgpt'),
+          buildApiUrl('/flow-generator/keywords'),
           {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              message: `以下のキーワードから建設機械の応急処置フローを生成してください：${keywordsInput}`,
-              type: 'flow-generation'
+              keywords: keywordsInput
             }),
           }
         );
       } catch (error) {
-        // 高度なフロー生成が失敗した場合、基本的なフロー生成にフォールバック
+        // フロー生成が失敗した場合のフォールバック
         console.log(
-          '高度なフロー生成が失敗、基本的なフロー生成にフォールバック'
+          'フロー生成が失敗しました'
         );
         response = await fetch(
           buildApiUrl('/flow-generator/keywords'),
@@ -104,56 +104,6 @@ const EmergencyGuideUploader: React.FC<EmergencyGuideUploaderProps> = ({
         // エラーレスポンスの場合
         const errorMessage = data.error || '生成に失敗しました';
         const errorDetails = data.details || '';
-
-        // OpenAI APIキーエラーの場合の特別な処理
-        if (
-          errorMessage.includes('OpenAI APIキー') ||
-          errorMessage.includes('APIキーが無効')
-        ) {
-          toast({
-            title: 'OpenAI APIキーエラー',
-            description:
-              '高度なフロー生成が利用できません。基本的なフロー生成を使用します。',
-            variant: 'destructive',
-          });
-
-          // 基本的なフロー生成にフォールバック
-          try {
-            const fallbackResponse = await fetch(
-              buildApiUrl('/chatgpt'),
-              {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  message: `簡易版：キーワード「${keywordsInput}」の応急処置手順を教えてください`,
-                  type: 'troubleshooting'
-                }),
-              }
-            );
-
-            const fallbackData = await fallbackResponse.json();
-
-            if (fallbackData.success && fallbackData.flowData) {
-              toast({
-                title: '基本的なフロー生成完了',
-                description: `「${fallbackData.flowData.title || 'タイトルなし'}」が生成されました。`,
-              });
-
-              // 生成されたフローの詳細ページに移動するためのイベントを発火
-              if (onUploadSuccess) {
-                onUploadSuccess(fallbackData.flowData.id);
-              }
-
-              // キーワード入力をクリア
-              setKeywordsInput('');
-              return;
-            }
-          } catch (fallbackrror) {
-            console.error('基本的なフロー生成も失敗:', fallbackrror);
-          }
-        }
 
         // その他のエラーメッセージの表示
         toast({
@@ -465,7 +415,10 @@ const EmergencyGuideUploader: React.FC<EmergencyGuideUploaderProps> = ({
                     htmlFor='saveOriginalFile'
                     className='text-sm text-gray-700'
                   >
-                    元のファイルも保存する
+                    元のファイルも保存する（通常は不要）
+                    <span className='text-xs text-gray-500 block mt-1'>
+                      Gemini検索用データは自動保存されます。監査用に原本が必要な場合のみチェック
+                    </span>
                   </Label>
                 </div>
               </div>

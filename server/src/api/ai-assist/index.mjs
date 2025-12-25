@@ -11,9 +11,13 @@ export default async function aiAssistHandler(req, res) {
     console.log('[api/ai-assist] Request:', { method, action, path: req.path, pathParts });
 
     if (method === 'GET' && action === 'settings') {
-      return res.json({
-        success: true,
-        data: {
+      try {
+        const path = await import('path');
+        const fs = await import('fs');
+        const __dirname = path.dirname(new URL(import.meta.url).pathname);
+        const SETTINGS_FILE = path.join(__dirname, '../../../data/ai-assist-settings.json');
+
+        const DEFAULT_SETTINGS = {
           initialPrompt: "何か問題がありましたか？お困りの事象を教えてください。",
           conversationStyle: "frank",
           questionFlow: {
@@ -33,24 +37,63 @@ export default async function aiAssistHandler(req, res) {
           escalationTime: 20,
           customInstructions: "",
           enableEmergencyContact: true
-        },
-        timestamp: new Date().toISOString()
-      });
+        };
+
+        let settings = DEFAULT_SETTINGS;
+        if (fs.existsSync(SETTINGS_FILE)) {
+          const settingsData = fs.readFileSync(SETTINGS_FILE, { encoding: 'utf8' });
+          settings = { ...DEFAULT_SETTINGS, ...JSON.parse(settingsData) };
+          console.log('✅ AI支援設定ファイルから読み込み成功');
+        } else {
+          console.log('📝 AI支援設定ファイルが存在しないため、デフォルト設定を使用');
+        }
+
+        return res.json({
+          success: true,
+          data: settings,
+          timestamp: new Date().toISOString()
+        });
+      } catch (error) {
+        console.error('[api/ai-assist/settings] GET Error:', error);
+        return res.status(500).json({
+          success: false,
+          error: 'AI支援設定の取得に失敗しました',
+          details: error.message
+        });
+      }
     }
 
     if (method === 'POST' && action === 'settings') {
       try {
         const settings = req.body;
         console.log('[api/ai-assist] Updating settings:', settings);
-        
-        // 設定を保存（実装は簡略化）
+
+        const path = await import('path');
+        const fs = await import('fs');
+        const __dirname = path.dirname(new URL(import.meta.url).pathname);
+        const SETTINGS_FILE = path.join(__dirname, '../../../data/ai-assist-settings.json');
+
+        // データディレクトリを確保
+        const dataDir = path.dirname(SETTINGS_FILE);
+        if (!fs.existsSync(dataDir)) {
+          fs.mkdirSync(dataDir, { recursive: true });
+        }
+
+        // 設定をファイルに保存
+        fs.writeFileSync(
+          SETTINGS_FILE,
+          JSON.stringify(settings, null, 2),
+          'utf-8'
+        );
+
+        console.log('✅ AI支援設定保存成功');
         return res.json({
           success: true,
           message: 'AI支援設定を更新しました',
           data: settings
         });
       } catch (error) {
-        console.error('[api/ai-assist] Settings update error:', error);
+        console.error('[api/ai-assist] POST Settings update error:', error);
         return res.status(500).json({
           success: false,
           error: 'AI支援設定の更新に失敗しました',

@@ -43,6 +43,7 @@ const EmergencyGuidePage = lazy(() => import('./pages/emergency-guide'));
 const UsersPage = lazy(() => import('./pages/users'));
 const BaseDataPage = lazy(() => import('./pages/base-data'));
 const MachineManagementPage = lazy(() => import('./pages/machine-management'));
+const FaultHistoryPage = lazy(() => import('./pages/fault-history'));
 
 const NotFoundPage = lazy(() => import('./pages/not-found'));
 
@@ -193,7 +194,7 @@ function AppContent() {
             <Route
               path='/history'
               element={
-                <ProtectedRoute requireAdmin>
+                <ProtectedRoute>
                   <HistoryPage />
                 </ProtectedRoute>
               }
@@ -209,7 +210,7 @@ function AppContent() {
             <Route
               path='/troubleshooting'
               element={
-                <ProtectedRoute requireAdmin>
+                <ProtectedRoute requireOperator>
                   <TroubleshootingPage />
                 </ProtectedRoute>
               }
@@ -244,6 +245,14 @@ function AppContent() {
                 <AdminRoute>
                   <MachineManagementPage />
                 </AdminRoute>
+              }
+            />
+            <Route
+              path='/fault-history'
+              element={
+                <ProtectedRoute requireAdmin>
+                  <FaultHistoryPage />
+                </ProtectedRoute>
               }
             />
             <Route path='/not-found' element={<NotFoundPage />} />

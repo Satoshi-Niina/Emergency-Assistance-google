@@ -1,147 +1,124 @@
-import { getBlobServiceClient, containerName } from '../../infra/blob.mjs';
-import { AUTO_INGEST_CHAT_EXPORTS, isAzureEnvironment } from '../../config/env.mjs';
+// GCSを優先使用、利用できない場合はローカルにフォールバック
+import { AUTO_INGEST_CHAT_EXPORTS } from '../../config/env.mjs';
+import { uploadBufferToGCS, downloadFromGCS, existsInGCS, listFilesInGCS, bucket } from '../../lib/google-cloud-storage.mjs';
 
-const EXPORT_SUBDIR = 'exports';
+// GCS上の保存先パス
+const GCS_EXPORT_DIR = 'chat-exports/json';
+// ローカル保存時のサブディレクトリ
+const LOCAL_EXPORT_SUBDIR = 'exports';
+
+// GCSが利用可能かどうかをチェック
+const useGCS = () => !!bucket;
 
 async function saveJsonFile(fileName, content) {
-  const useAzure = isAzureEnvironment();
+  const isGCS = useGCS();
   const fs = await import('fs');
   const path = await import('path');
 
-  // ローカルモード: knowledge-base/exports/ へ保存
-  if (!useAzure) {
-    console.log('[saveJsonFile] LOCAL: Using local filesystem:', fileName);
-    const localDir = path.join(process.cwd(), 'knowledge-base', EXPORT_SUBDIR);
-    await fs.promises.mkdir(localDir, { recursive: true });
-    const localPath = path.join(localDir, fileName);
-    await fs.promises.writeFile(localPath, content, 'utf8');
-    console.log(`[saveJsonFile] LOCAL: Successfully saved to: ${localPath}`);
-    return { storage: 'local', path: localPath };
+  // GCSモード: chat-exports/json/ へ保存（優先）
+  if (isGCS) {
+    console.log('[saveJsonFile] GCS: Using Google Cloud Storage:', fileName);
+    const gcsPath = `${GCS_EXPORT_DIR}/${fileName}`;
+    const buffer = Buffer.from(content, 'utf-8');
+    const publicUrl = await uploadBufferToGCS(buffer, gcsPath, 'application/json');
+    console.log(`[saveJsonFile] GCS: Successfully saved to: ${gcsPath}`);
+    return { storage: 'gcs', path: gcsPath, url: publicUrl };
   }
 
-  // Azureモード: BLOBストレージへ保存
-  console.log('[saveJsonFile] AZURE: Using BLOB storage:', fileName);
-  const blobServiceClient = getBlobServiceClient();
-  
-  if (!blobServiceClient) {
-    throw new Error('BLOB storage is not configured in production. Please check AZURE_STORAGE_CONNECTION_STRING environment variable.');
-  }
-
-  const containerClient = blobServiceClient.getContainerClient(containerName);
-  await containerClient.createIfNotExists();
-  const { norm } = await import('../../infra/blob.mjs');
-  // norm()を使用してBLOB_PREFIXを自動適用（knowledge-base/は重複するので除外）
-  const blobName = norm(`${EXPORT_SUBDIR}/${fileName}`);
-  const blockBlobClient = containerClient.getBlockBlobClient(blobName);
-  await blockBlobClient.upload(content, Buffer.byteLength(content), {
-    blobHTTPHeaders: { blobContentType: 'application/json' },
-  });
-  console.log(`[saveJsonFile] AZURE: Successfully saved to BLOB: ${blobName}`);
-  return { storage: 'blob', blobName };
+  // ローカルモード: knowledge-base/exports/ へ保存（フォールバック）
+  console.log('[saveJsonFile] LOCAL: Using local filesystem:', fileName);
+  const localDir = path.join(process.cwd(), 'knowledge-base', LOCAL_EXPORT_SUBDIR);
+  await fs.promises.mkdir(localDir, { recursive: true });
+  const localPath = path.join(localDir, fileName);
+  await fs.promises.writeFile(localPath, content, 'utf8');
+  console.log(`[saveJsonFile] LOCAL: Successfully saved to: ${localPath}`);
+  return { storage: 'local', path: localPath };
 }
 
 async function getLatestExport(chatId) {
   let latest = null;
-  const useAzure = isAzureEnvironment();
+  const isGCS = useGCS();
   const fs = await import('fs');
   const path = await import('path');
 
-  // ローカルモード: knowledge-base/exports/ から最新ファイルを検索
-  if (!useAzure) {
-    const localDir = path.join(process.cwd(), 'knowledge-base', EXPORT_SUBDIR);
+  // GCSモード: chat-exports/json/ から最新ファイルを検索（優先）
+  if (isGCS) {
     try {
-      const files = await fs.promises.readdir(localDir);
-      for (const fileName of files) {
-        if (!fileName.endsWith('.json')) continue;
-        if (!chatId || fileName.includes(chatId)) {
-          const filePath = path.join(localDir, fileName);
-          const stats = await fs.promises.stat(filePath);
-          if (!latest || stats.mtime > latest.lastModified) {
+      const files = await listFilesInGCS(`${GCS_EXPORT_DIR}/`);
+      for (const file of files) {
+        if (!file.name.endsWith('.json')) continue;
+        if (!chatId || file.name.includes(chatId)) {
+          const fileDate = new Date(file.updated);
+          if (!latest || fileDate > latest.lastModified) {
             latest = {
-              source: 'local',
-              name: fileName,
-              lastModified: stats.mtime,
+              source: 'gcs',
+              name: file.name.replace(`${GCS_EXPORT_DIR}/`, ''),
+              lastModified: fileDate,
             };
           }
         }
       }
+      if (latest) return latest;
     } catch (error) {
-      console.warn('[api/chats] LOCAL: Error reading exports:', error.message);
+      console.warn('[api/chats] GCS: Error reading exports:', error.message);
     }
-    return latest;
   }
 
-  // Azureモード: BLOBから最新ファイルを検索
-  const blobServiceClient = getBlobServiceClient();
-  if (!blobServiceClient) {
-    console.warn('[api/chats] BLOB storage not configured');
-    return null;
-  }
-
-  const containerClient = blobServiceClient.getContainerClient(containerName);
-  const { norm } = await import('../../infra/blob.mjs');
-  // norm()を使用してBLOB_PREFIXを自動適用（knowledge-base/は重複するので除外）
-  const prefix = norm(`${EXPORT_SUBDIR}/`);
-  for await (const blob of containerClient.listBlobsFlat({ prefix })) {
-    if (!blob.name.endsWith('.json')) continue;
-    if (!chatId || blob.name.includes(chatId)) {
-      if (!latest || (blob.properties.lastModified && blob.properties.lastModified > latest.lastModified)) {
-        latest = {
-          source: 'blob',
-          name: blob.name,
-          lastModified: blob.properties.lastModified,
-        };
+  // ローカルモード: knowledge-base/exports/ から最新ファイルを検索（フォールバック）
+  const localDir = path.join(process.cwd(), 'knowledge-base', LOCAL_EXPORT_SUBDIR);
+  try {
+    const files = await fs.promises.readdir(localDir);
+    for (const fileName of files) {
+      if (!fileName.endsWith('.json')) continue;
+      if (!chatId || fileName.includes(chatId)) {
+        const filePath = path.join(localDir, fileName);
+        const stats = await fs.promises.stat(filePath);
+        if (!latest || stats.mtime > latest.lastModified) {
+          latest = {
+            source: 'local',
+            name: fileName,
+            lastModified: stats.mtime,
+          };
+        }
       }
     }
+  } catch (error) {
+    console.warn('[api/chats] LOCAL: Error reading exports:', error.message);
   }
 
   return latest;
 }
 
 async function downloadExport(fileName) {
-  const useAzure = isAzureEnvironment();
+  const isGCS = useGCS();
   const fs = await import('fs');
   const path = await import('path');
 
-  // ローカルモード: knowledge-base/exports/ から読み取り
-  if (!useAzure) {
-    const localPath = path.join(process.cwd(), 'knowledge-base', EXPORT_SUBDIR, fileName);
-    console.log('[api/chats] LOCAL: Downloading from local:', localPath);
+  // GCSモード: chat-exports/json/ から読み取り（優先）
+  if (isGCS) {
+    const gcsPath = `${GCS_EXPORT_DIR}/${fileName}`;
+    console.log('[api/chats] GCS: Downloading from:', gcsPath);
     try {
-      if (await fs.promises.access(localPath).then(() => true).catch(() => false)) {
-        return await fs.promises.readFile(localPath);
+      const exists = await existsInGCS(gcsPath);
+      if (exists) {
+        return await downloadFromGCS(gcsPath);
       }
     } catch (error) {
-      console.warn('[api/chats] LOCAL: Error reading file:', error.message);
-    }
-    return null;
-  }
-
-  // Azureモード: BLOBから読み取り
-  const blobServiceClient = getBlobServiceClient();
-  if (!blobServiceClient) {
-    console.warn('[api/chats] BLOB storage not configured');
-    return null;
-  }
-
-  const containerClient = blobServiceClient.getContainerClient(containerName);
-  const { norm } = await import('../../infra/blob.mjs');
-  // norm()を使用してBLOB_PREFIXを自動適用（knowledge-base/は重複するので除外）
-  const blobName = norm(`${EXPORT_SUBDIR}/${fileName}`);
-  console.log('[api/chats] AZURE: Downloading from Blob:', blobName);
-  const blobClient = containerClient.getBlobClient(blobName);
-  
-  if (await blobClient.exists()) {
-    const downloadResponse = await blobClient.download();
-    const chunks = [];
-    if (downloadResponse.readableStreamBody) {
-      for await (const chunk of downloadResponse.readableStreamBody) {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      }
-      return Buffer.concat(chunks);
+      console.warn('[api/chats] GCS: Error reading file:', error.message);
     }
   }
-  
+
+  // ローカルモード: knowledge-base/exports/ から読み取り（フォールバック）
+  const localPath = path.join(process.cwd(), 'knowledge-base', LOCAL_EXPORT_SUBDIR, fileName);
+  console.log('[api/chats] LOCAL: Downloading from local:', localPath);
+  try {
+    if (await fs.promises.access(localPath).then(() => true).catch(() => false)) {
+      return await fs.promises.readFile(localPath);
+    }
+  } catch (error) {
+    console.warn('[api/chats] LOCAL: Error reading file:', error.message);
+  }
+
   return null;
 }
 

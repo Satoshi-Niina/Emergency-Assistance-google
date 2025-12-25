@@ -31,6 +31,7 @@ export default async function machinesHandler(req, res) {
 
       return res.json({
         success: true,
+        machineTypes: result.rows,
         data: result.rows,
         total: result.rows.length,
         timestamp: new Date().toISOString(),
@@ -124,6 +125,7 @@ export default async function machinesHandler(req, res) {
 
         return res.json({
             success: true,
+            machines: result.rows,
             data: result.rows,
             total: result.rows.length,
             timestamp: new Date().toISOString(),

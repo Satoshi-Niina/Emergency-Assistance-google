@@ -1,5 +1,5 @@
-import { BlobServiceClient } from '@azure/storage-blob';
-import { BLOB_CONTAINER, BLOB_PREFIX } from '../blob-config.mjs';
+// GCS専用ストレージシステム（Azure Blob削除済み）
+// ストレージ操作は lib/storage.mjs を使用
 
 export default async function (req, res) {
   const method = req.method;
@@ -14,7 +14,7 @@ export default async function (req, res) {
     // OPTIONSリクエストの処理
     if (method === 'OPTIONS') {
       res.set({
-        'Access-Control-Allow-Origin': '*', // 必要に応じて調整
+        'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization, Cookie',
         'Access-Control-Max-Age': '86400',
@@ -22,90 +22,20 @@ export default async function (req, res) {
       return res.status(200).send('');
     }
 
-    const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
     console.log('Storage configuration:', {
-      hasConnectionString: !!connectionString,
-      containerName: BLOB_CONTAINER,
-      blobPrefix: BLOB_PREFIX,
-      envVars: {
-        AZURE_STORAGE_CONNECTION_STRING: connectionString
-          ? '[SET]'
-          : '[NOT SET]',
-        BLOB_CONTAINER_NAME: BLOB_CONTAINER,
-        BLOB_PREFIX: BLOB_PREFIX,
-      },
+      storageMode: process.env.STORAGE_MODE || 'local',
+      gcsBucket: process.env.GOOGLE_CLOUD_STORAGE_BUCKET,
     });
 
-    if (!connectionString) {
-      console.error('Blob connection error', {
-        method,
-        path,
-        container: BLOB_CONTAINER,
-        blobPrefix: BLOB_PREFIX,
-      });
-      return res.status(500).json({
-        success: false,
-        error: 'Azure Storage接続文字列が設定されていません',
-        details: 'AZURE_STORAGE_CONNECTION_STRING environment variable is required',
-        method,
-        path,
-        container: BLOB_CONTAINER,
-        blobPrefix: BLOB_PREFIX,
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    const blobServiceClient = BlobServiceClient.fromConnectionString(connectionString);
-    const containerClient = blobServiceClient.getContainerClient(BLOB_CONTAINER);
-    
-    // コンテナの存在確認
-    const containerExists = await containerClient.exists();
-    if (!containerExists) {
-      console.error('Blob container not found', {
-        method,
-        path,
-        container: BLOB_CONTAINER,
-      });
-      return res.status(404).json({
-        success: false,
-        error: 'コンテナが見つかりません',
-        method,
-        path,
-        container: BLOB_CONTAINER,
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    // フローファイルの一覧を取得
-    const flows = [];
-    // BLOB_PREFIX が空文字の場合の処理
-    const listOptions = {
-      includeMetadata: true,
-    };
-    if (BLOB_PREFIX) {
-        listOptions.prefix = BLOB_PREFIX;
-    }
-
-    console.log('Listing blobs with options:', listOptions);
-    
-    for await (const blob of containerClient.listBlobsFlat(listOptions)) {
-      // BLOB_PREFIX を除去して表示名にするロジックは元のコードを踏襲
-      // ただし、BLOB_PREFIX が空の場合はそのまま
-      const displayName = BLOB_PREFIX ? blob.name.replace(BLOB_PREFIX, '') : blob.name;
-      
-      flows.push({
-        name: blob.name, // 完全なBLOB名
-        displayName: displayName,
-        size: blob.properties.contentLength,
-        lastModified: blob.properties.lastModified,
-        contentType: blob.properties.contentType,
-        url: containerClient.getBlobClient(blob.name).url,
-      });
-    }
-
-    return res.status(200).json({
-        success: true,
-        data: flows
+    // Azure BLOB Storageはサポート終了 - GCS実装が必要な場合は lib/storage.mjs を使用
+    console.warn('Flows API: Azure BLOB removed, use lib/storage.mjs for GCS');
+    return res.status(501).json({
+      success: false,
+      error: 'Flows API not implemented for GCS',
+      details: 'Use troubleshooting API for flow management with GCS',
+      method,
+      path,
+      timestamp: new Date().toISOString(),
     });
 
   } catch (error) {
@@ -117,3 +47,4 @@ export default async function (req, res) {
     });
   }
 }
+

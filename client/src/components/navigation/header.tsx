@@ -76,10 +76,14 @@ export default function Header({
       <div className='flex items-center space-x-4'>
         <div className='text-xs' style={{ fontSize: '80%' }}>
           <div>
-            ログインユーザー：{user?.display_name || user?.username || 'ゲスト'}
+            ログインユーザー：{user?.displayName || user?.username || 'ゲスト'}
           </div>
           <div className='text-blue-200'>
-            {user?.role === 'admin' ? '運用管理者' : '一般ユーザー'}
+            {user?.role === 'admin' 
+              ? 'システム管理者' 
+              : user?.role === 'operator' 
+              ? '運用管理者' 
+              : '一般ユーザー'}
           </div>
         </div>
 

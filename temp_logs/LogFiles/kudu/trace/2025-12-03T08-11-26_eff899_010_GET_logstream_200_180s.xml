@@ -1,6 +1,0 @@
-<step title="Incoming Request" date="2025-12-03T08:11:26.132" instance="eff899" url="/logstream" method="GET" type="request" pid="835,1,16" Host="emergency-assistantapp.scm.azurewebsites.net" User-Agent="AZURECLI/2.67.0 (MSI)" Accept-Encoding="identity" Authorization="Bas..." x-ms-client-request-id="a8358365-d01f-11f0-a6f0-985f41f2c1b3" X-ARR-LOG-ID="a8358365-d01f-11f0-a6f0-985f41f2c1b3" CLIENT-IP="153.171.234.141:54007" X-SITE-DEPLOYMENT-ID="emergency-assistantapp" WAS-DEFAULT-HOSTNAME="emergency-assistantapp.scm.azurewebsites.net" X-Forwarded-Proto="https" X-AppService-Proto="https" X-Forwarded-TlsVersion="1.3" X-WAWS-Unencoded-URL="/logstream" X-Client-IP="153.171.234.141" X-Client-Port="54007" >
-  <step title="Cleanup Xml Logs" date="2025-12-03T08:11:26.135" /><!-- duration: 6ms -->
-  <step title="LogStreamHandlerMiddleware.Invoke" date="2025-12-03T08:11:26.150" /><!-- duration: 23ms -->
-  <step title="Error occurred" date="2025-12-03T08:14:26.174" type="error" text="LogStreamManager: ProcessRequest end" /><!-- duration: 6ms -->
-  <step title="Outgoing response" date="2025-12-03T08:14:26.195" type="response" statusCode="200" statusText="OK" /><!-- duration: 4ms -->
-</step><!-- duration: 180084ms -->

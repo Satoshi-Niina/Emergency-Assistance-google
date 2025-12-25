@@ -64,7 +64,11 @@ export default function BaseDataPage() {
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
   const [importStatus, setImportStatus] = useState<ImportStatus[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [saveOriginalFile, setSaveOriginalFile] = useState(false); // デフォルトは保存しない
+  const [saveOriginalFile, setSaveOriginalFile] = useState(false); // デフォルトで保存しない（コスト最適化）
+  const [machineTag, setMachineTag] = useState(''); // 機種タグ（オプション）
+  const [machineTypes, setMachineTypes] = useState<any[]>([]); // DBから取得した機種一覧
+  const [category, setCategory] = useState('all'); // カテゴリ選択（デフォルト: 全て）
+  const [categories, setCategories] = useState<any[]>([]); // DBから取得したカテゴリ一覧
   const [exportFiles, setExportFiles] = useState<ExportFile[]>([]);
   const [selectedExportFile, setSelectedExportFile] = useState<string | null>(null);
   const [isImportingExport, setIsImportingExport] = useState(false);
@@ -148,6 +152,7 @@ export default function BaseDataPage() {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('saveOriginalFile', saveOriginalFile ? 'true' : 'false');
+        formData.append('machineTag', machineTag);
 
         try {
           const response = await fetch(buildApiUrl('/files/import'), {
@@ -250,6 +255,25 @@ export default function BaseDataPage() {
     } catch (error) {
       console.error('RAG設定保存エラー:', error);
       alert('設定の保存中にエラーが発生しました');
+    }
+  };
+
+  // 機種マスタから機種リストを取得
+  // 機種タイプ一覧の読み込み
+  const loadMachineTypes = async () => {
+    try {
+      const response = await fetch(buildApiUrl('/machines/machine-types'), {
+        credentials: 'include',
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setMachineTypes(data.machineTypes || data.data || []);
+      }
+    } catch (error) {
+      console.error('機種タイプ読み込みエラー:', error);
+      // エラー時は空配列
+      setMachineTypes([]);
     }
   };
 
@@ -485,6 +509,7 @@ export default function BaseDataPage() {
 
   // コンポーネントマウント時に設定を読み込み
   useEffect(() => {
+    loadMachineTypes();
     loadRagSettings();
     loadAiAssistSettings();
     fetchExportFiles();
@@ -624,17 +649,22 @@ export default function BaseDataPage() {
               </CardHeader>
               <CardContent className='space-y-4'>
                 <div>
-                  <Label htmlFor='file-upload'>
+                  <Label htmlFor='file-upload' className='text-base font-semibold mb-2 block'>
                     ファイルを選択 (TXT, PDF, XLSX, PPTX)
                   </Label>
-                  <Input
-                    id='file-upload'
-                    type='file'
-                    multiple
-                    accept='.txt,.pdf,.xlsx,.pptx'
-                    onChange={handleFileSelect}
-                    className='mt-1'
-                  />
+                  <div className='border-3 border-blue-400 rounded-lg p-6 bg-blue-50 hover:bg-blue-100 transition-colors'>
+                    <Input
+                      id='file-upload'
+                      type='file'
+                      multiple
+                      accept='.txt,.pdf,.xlsx,.pptx'
+                      onChange={handleFileSelect}
+                      className='h-20 cursor-pointer file:mr-4 file:py-3 file:px-6 file:rounded-md file:border-0 file:text-base file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700 file:cursor-pointer'
+                    />
+                  </div>
+                  <p className='text-sm text-gray-600 mt-2'>
+                    💡 複数ファイルを一度に選択できます
+                  </p>
                 </div>
 
                 {selectedFiles && (
@@ -665,21 +695,22 @@ export default function BaseDataPage() {
                 )}
 
                 {/* 元ファイル保存オプション */}
-                <div className='flex items-center space-x-2 p-3 bg-gray-50 rounded border'>
+                <div className='flex items-center space-x-3 p-4 bg-blue-50 rounded-lg border-2 border-blue-300'>
                   <Checkbox
                     id='save-original-file'
                     checked={saveOriginalFile}
                     onCheckedChange={(checked) =>
                       setSaveOriginalFile(checked === true)
                     }
+                    className='h-5 w-5'
                   />
                   <Label
                     htmlFor='save-original-file'
-                    className='text-sm font-normal cursor-pointer flex-1'
+                    className='text-base font-semibold cursor-pointer flex-1 text-blue-900'
                   >
-                    元のファイルも保存する
-                    <span className='text-xs text-gray-500 block mt-1'>
-                      （チャンク処理は必須ですが、元ファイルは保存を選択できます）
+                    ☑️ 元のファイルも保存する（通常は不要）
+                    <span className='text-sm text-blue-700 block mt-1 font-normal'>
+                      Gemini検索用データは自動保存されます。監査用に原本が必要な場合のみチェック
                     </span>
                   </Label>
                 </div>

@@ -1,4 +1,0 @@
-<step title="Incoming Request" date="2025-12-03T09:32:05.869" instance="eff899" url="/dump" method="GET" type="request" pid="833,1,22" Host="emergency-assistantapp.scm.azurewebsites.net" User-Agent="AZURECLI/2.67.0 (MSI)" Accept-Encoding="identity" Authorization="Bas..." x-ms-client-request-id="ed20f0d3-d02a-11f0-855b-985f41f2c1b3" X-ARR-LOG-ID="ed20f0d3-d02a-11f0-855b-985f41f2c1b3" CLIENT-IP="153.171.234.141:38649" X-SITE-DEPLOYMENT-ID="emergency-assistantapp" WAS-DEFAULT-HOSTNAME="emergency-assistantapp.scm.azurewebsites.net" X-Forwarded-Proto="https" X-AppService-Proto="https" X-Forwarded-TlsVersion="1.3" X-WAWS-Unencoded-URL="/dump" X-Client-IP="153.171.234.141" X-Client-Port="38649" >
-  <step title="Cleanup Xml Logs" date="2025-12-03T09:32:05.898" /><!-- duration: 140ms -->
-  <step title="Outgoing response" date="2025-12-03T09:32:13.347" type="response" statusCode="200" statusText="OK" /><!-- duration: 41ms -->
-</step><!-- duration: 7538ms -->

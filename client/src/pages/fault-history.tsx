@@ -42,7 +42,7 @@ function HistoryDetailView({ history }: { history: FaultHistoryItem }) {
           <div class="images-grid">
             ${history.images.map(img => `
               <div class="image-item">
-                <img src="${getFaultHistoryImageUrl(img.fileName)}" alt="${img.description || img.originalFileName}" />
+                <img src="${getFaultHistoryImageUrl(img)}" alt="${img.description || img.originalFileName}" />
                 <p>${img.description || img.originalFileName}</p>
               </div>
             `).join('')}
@@ -401,7 +401,7 @@ function HistoryDetailView({ history }: { history: FaultHistoryItem }) {
               {history.images.map((image) => (
                 <div key={image.id} className="border rounded-lg p-2 hover:shadow-lg transition-shadow">
                   <img
-                    src={getFaultHistoryImageUrl(image.fileName)}
+                    src={getFaultHistoryImageUrl(image)}
                     alt={image.description || image.originalFileName}
                     className="w-full h-32 object-cover rounded mb-2"
                     onError={(e) => {

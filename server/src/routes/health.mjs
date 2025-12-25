@@ -1,5 +1,5 @@
 import express from 'express';
-import { HEALTH_TOKEN, NODE_ENV, VERSION, AZURE_STORAGE_CONNECTION_STRING, DATABASE_URL, PG_SSL } from '../config/env.mjs';
+import { HEALTH_TOKEN, NODE_ENV, VERSION, DATABASE_URL, PG_SSL } from '../config/env.mjs';
 import { dbPool } from '../infra/db.mjs';
 
 const router = express.Router();
@@ -50,11 +50,8 @@ router.get('/detailed', (req, res) => {
     PG_SSL: PG_SSL || 'not_set'
   };
 
-  if (AZURE_STORAGE_CONNECTION_STRING) {
-    healthResponse.blob_storage_status = 'configured';
-  } else {
-    healthResponse.blob_storage_status = 'not_configured';
-  }
+  // Azure BLOB Storageは使用しない（GCSまたはローカルストレージ）
+  healthResponse.storage_mode = process.env.STORAGE_MODE || 'local';
 
   res.status(200).json(healthResponse);
 });
@@ -82,12 +79,8 @@ router.get('/full', async (req, res) => {
     status.checks.database = 'not_configured';
   }
 
-  // Blob Check (simplified)
-  if (AZURE_STORAGE_CONNECTION_STRING) {
-    status.checks.blobStorage = 'configured';
-  } else {
-    status.checks.blobStorage = 'not_configured';
-  }
+  // Storage Check
+  status.checks.storage = process.env.STORAGE_MODE || 'local';
 
   res.json(status);
 });
